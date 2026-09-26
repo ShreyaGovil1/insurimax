@@ -1,0 +1,246 @@
+"""
+Claims core routes.
+
+POST   /claims
+GET    /claims
+GET    /claims/{claimId}
+PATCH  /claims/{claimId}/status
+DELETE /claims/{claimId}
+GET    /claims/{claimId}/sla
+GET    /claims/{claimId}/summary
+GET    /claims/{claimId}/audit-report
+"""
+import math
+import uuid
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+
+from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
+from app.models.claim import ClaimStatus
+from app.models.user import UserRole
+from app.schemas.claim import (
+    ClaimAggregateSummary,
+    ClaimCreate,
+    ClaimRead,
+    ClaimStatusUpdate,
+    ClaimSummary,
+    SLAStatus,
+)
+from app.schemas.common import MessageResponse, PaginatedResponse
+from app.services import claim_service
+
+router = APIRouter(prefix="/claims", tags=["Claims"])
+
+
+@router.post("", response_model=ClaimRead, status_code=status.HTTP_201_CREATED)
+async def create_claim(
+    body: ClaimCreate,
+    db: DBSession,
+    current_user: AdjusterOrAbove,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Create a new claim. SLA deadline is set to now + 3 hours (IRDAI rule).
+    The claim lands in SUBMITTED status; document uploads follow separately.
+    """
+    claim = await claim_service.create_claim(db, body, current_user.id)
+    return claim
+
+
+@router.get("", response_model=PaginatedResponse[ClaimSummary])
+async def list_claims(
+    db: DBSession,
+    current_user: CurrentUser,
+    claim_status: ClaimStatus | None = Query(None, alias="status"),
+    hospital_org_id: uuid.UUID | None = Query(None),
+    sla_remaining_lt_minutes: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    List claims with optional filters.
+    Adjusters only see claims assigned to them; admins see all.
+    """
+    adjuster_filter = None
+    if current_user.role == UserRole.ADJUSTER:
+        adjuster_filter = current_user.id
+
+    claims, total = await claim_service.list_claims(
+        db,
+        status=claim_status,
+        hospital_org_id=hospital_org_id,
+        assigned_adjuster_id=adjuster_filter,
+        sla_remaining_lt_minutes=sla_remaining_lt_minutes,
+        page=page,
+        page_size=page_size,
+    )
+
+    # Build summary items — merge adjudication flagged count if available
+    summaries: list[ClaimSummary] = []
+    for c in claims:
+        adj = c.adjudication_result if hasattr(c, "adjudication_result") else None
+        summaries.append(
+            ClaimSummary(
+                id=c.id,
+                claim_number=c.claim_number,
+                patient_name=c.patient_name,
+                hospital_name=c.hospital_name,
+                billed_amount=c.billed_amount,
+                approved_amount=c.approved_amount,
+                status=c.status,
+                ai_confidence_score=c.ai_confidence_score,
+                flagged_items_count=adj.flagged_items_count if adj else None,
+                sla_deadline=c.sla_deadline,
+                sla_breached=c.sla_breached,
+                submitted_at=c.submitted_at,
+            )
+        )
+
+    return PaginatedResponse(
+        items=summaries,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=math.ceil(total / page_size) if total else 0,
+    )
+
+
+@router.get("/{claim_id}", response_model=ClaimRead)
+async def get_claim(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
+    claim = await claim_service.get_claim(db, claim_id)
+    if not claim:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return claim
+
+
+@router.patch("/{claim_id}/status", response_model=ClaimRead)
+async def update_claim_status(
+    claim_id: uuid.UUID,
+    body: ClaimStatusUpdate,
+    db: DBSession,
+    current_user: AdjusterOrAbove,
+):
+    """Transition a claim to a new status (with audit history)."""
+    claim = await claim_service.update_claim_status(db, claim_id, body, current_user.id)
+    if not claim:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return claim
+
+
+@router.delete("/{claim_id}", response_model=MessageResponse)
+async def void_claim(
+    claim_id: uuid.UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Soft-void a claim (sets status to REJECTED). Admin only."""
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+
+    update = ClaimStatusUpdate(status=ClaimStatus.REJECTED, note="Voided by admin")
+    claim = await claim_service.update_claim_status(db, claim_id, update, current_user.id)
+    if not claim:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return {"message": f"Claim {claim_id} voided"}
+
+
+@router.get("/{claim_id}/sla", response_model=SLAStatus)
+async def get_claim_sla(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
+    """
+    Real-time SLA status for a claim.
+    breach_risk=True means < 30 minutes remaining.
+    """
+    sla = await claim_service.get_sla_status(db, claim_id)
+    if not sla:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return sla
+
+
+@router.get("/{claim_id}/summary", response_model=ClaimAggregateSummary)
+async def get_claim_summary(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
+    """
+    Phase 4 summary bar: billed → approved → deducted breakdown.
+    """
+    summary = await claim_service.get_claim_aggregate_summary(db, claim_id)
+    if not summary:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return summary
+
+
+@router.get("/{claim_id}/audit-report")
+async def get_audit_report(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
+    """
+    Return a structured, compliance-ready audit report for a finalized claim.
+    Includes every line item, decision, citation, override, and timestamp.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.claim import Claim
+    from app.models.adjudication import AdjudicationResult
+
+    claim = await claim_service.get_claim(db, claim_id)
+    if not claim:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+
+    adj_result = await db.execute(
+        select(AdjudicationResult)
+        .where(AdjudicationResult.claim_id == claim_id)
+        .options(selectinload(AdjudicationResult.line_items))
+    )
+    adj = adj_result.scalar_one_or_none()
+
+    report = {
+        "report_generated_at": datetime.now(timezone.utc).isoformat(),
+        "claim": {
+            "id": str(claim.id),
+            "claim_number": claim.claim_number,
+            "patient_name": claim.patient_name,
+            "hospital_name": claim.hospital_name,
+            "insurer_name": claim.insurer_name,
+            "status": claim.status.value,
+            "submitted_at": claim.submitted_at.isoformat(),
+            "finalized_at": claim.finalized_at.isoformat() if claim.finalized_at else None,
+            "sla_deadline": claim.sla_deadline.isoformat() if claim.sla_deadline else None,
+            "sla_breached": claim.sla_breached,
+        },
+        "adjudication": {
+            "total_billed_inr": adj.total_billed_inr if adj else None,
+            "total_approved_inr": adj.total_approved_inr if adj else None,
+            "total_deducted_inr": adj.total_deducted_inr if adj else None,
+            "deduction_breakdown": adj.deduction_breakdown if adj else None,
+            "confidence_score": adj.confidence_score if adj else None,
+            "auto_approved": adj.auto_approved if adj else False,
+            "finalized_at": adj.finalized_at.isoformat() if adj and adj.finalized_at else None,
+        },
+        "line_items": [
+            {
+                "line_number": li.line_number,
+                "item_name": li.item_name,
+                "item_category": li.item_category,
+                "billed_amount_inr": li.billed_amount_inr,
+                "approved_amount_inr": li.approved_amount_inr,
+                "deducted_amount_inr": li.deducted_amount_inr,
+                "ai_status": li.ai_status.value,
+                "final_status": li.final_status.value,
+                "ai_explanation": li.ai_explanation,
+                "citation_data": li.citation_data,
+                "is_overridden": li.is_overridden,
+                "override_reason": li.override_reason.value if li.override_reason else None,
+                "override_note": li.override_note,
+            }
+            for li in (adj.line_items if adj else [])
+        ],
+        "status_history": [
+            {
+                "from_status": h.from_status.value if h.from_status else None,
+                "to_status": h.to_status.value,
+                "note": h.note,
+                "created_at": h.created_at.isoformat(),
+            }
+            for h in claim.status_history
+        ],
+    }
+    return JSONResponse(content=report)
