@@ -26,6 +26,7 @@ dependencies = [
     "google-generativeai>=0.8.0",
     "google-auth>=2.29.0",
     "google-cloud-secret-manager>=2.20.0",
+    "google-adk>=1.0.0",
 
     # LangChain (already in project)
     "langchain>=0.2.0",

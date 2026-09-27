@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agent.adjudicator import run_adjudication_agent
 from app.core.config import settings
-from app.gcp.gemini import ADJUDICATION_SYSTEM_PROMPT, generate_json
 from app.models.adjudication import (
     AdjudicationResult,
     AdjudicationStatus,
@@ -103,20 +103,11 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             for item in npi_result.scalars().all()
         ]
 
-        # ── Build Gemini prompt ────────────────────────────────────────────────
-        import json
-
-        prompt = (
-            f"{ADJUDICATION_SYSTEM_PROMPT}\n\n"
-            f"## Extracted Bill Data\n{json.dumps(extracted_data, indent=2)}\n\n"
-            f"## Policy Rules\n{json.dumps(policy_rules, indent=2)}\n\n"
-            f"## IRDAI Non-Payable Items\n{json.dumps(non_payable_items, indent=2)}\n\n"
-            "Perform the full adjudication audit now."
-        )
-
-        gemini_output, prompt_tokens, completion_tokens = await generate_json(
-            prompt=prompt,
-            model_name=settings.GEMINI_MODEL,
+        # ── Run the ADK adjudication agent ─────────────────────────────────────
+        gemini_output, prompt_tokens, completion_tokens = await run_adjudication_agent(
+            extracted_data=extracted_data,
+            policy_rules=policy_rules,
+            non_payable_items=non_payable_items,
         )
 
         # ── Parse Gemini output ────────────────────────────────────────────────
@@ -166,6 +157,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
                 citation_data={
                     "policy_rule_reference": rule_ref,
                     "confidence": item.get("confidence"),
+                    "cap_analysis": item.get("cap_analysis"),
                 },
             )
             db.add(lid)
