@@ -1,118 +1,178 @@
-import React from "react"
-import { ShieldCheck, Plus, User, Sparkles, Building2, Activity } from "lucide-react"
+import React, { useState } from "react"
+import {
+  ShieldCheck,
+  Plus,
+  User,
+  Sparkles,
+  Building2,
+  Activity,
+  Layers,
+  FileSpreadsheet,
+  ChevronDown,
+  LogOut,
+  Bell,
+  CheckCircle2,
+  Circle,
+} from "lucide-react"
 import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 
+const NAV_ITEMS = [
+  { id: "queue", label: "Adjudication Queue", icon: Layers },
+  { id: "claims", label: "Claims Explorer", icon: FileSpreadsheet },
+  { id: "hospital", label: "Hospital Pre-Check", icon: Building2 },
+  { id: "policies", label: "Policies & Rules", icon: ShieldCheck },
+  { id: "analytics", label: "Analytics & SLA", icon: Activity },
+]
+
+const ROLE_OPTIONS = [
+  { key: "adjuster", label: "TPA Adjuster", short: "Adjuster" },
+  { key: "senior_adjuster", label: "Senior Adjuster (Approval)", short: "Senior Adj." },
+  { key: "admin", label: "TPA Operations Admin", short: "Admin" },
+  { key: "hospital_desk", label: "Hospital Billing Desk", short: "Hospital" },
+]
+
 export function Header({ currentView, onViewChange, onNewClaim }) {
   const { user, switchRole, logout } = useAuth()
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false)
+
+  const currentRoleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-      <div className="flex h-16 items-center justify-between px-6 max-w-7xl mx-auto">
-        {/* Brand */}
-        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => onViewChange("queue")}>
-          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20">
-            <ShieldCheck className="w-6 h-6" />
+    <header className="sticky top-0 z-40 w-full px-4 sm:px-6 pt-3 pb-2 transition-all">
+      <div className="max-w-7xl mx-auto flex items-center justify-between bg-white/90 backdrop-blur-md rounded-2xl sm:rounded-full border border-slate-200/80 px-4 py-2 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.04)]">
+        
+        {/* Brand & Live SLA status */}
+        <div
+          className="flex items-center space-x-3 cursor-pointer select-none group"
+          onClick={() => onViewChange("queue")}
+        >
+          <div className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-950 text-white shadow-xs group-hover:scale-105 transition-transform">
+            <ShieldCheck className="w-5 h-5 text-[#A3FF12]" />
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg font-bold tracking-tight text-slate-900">InsuriMax</span>
-              <Badge variant="info" className="text-[10px] uppercase font-semibold py-0 px-1.5 h-4 bg-blue-50 text-blue-700 border-blue-200">
-                Gemini 1.5 Pro
-              </Badge>
+          <div className="flex flex-col">
+            <div className="flex items-center space-x-1.5">
+              <span className="text-base font-extrabold tracking-tight text-slate-900">InsuriMax</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#A3FF12] animate-pulse" />
+                AI 3h SLA
+              </span>
             </div>
-            <p className="text-[11px] text-slate-500 font-medium">IRDAI 3-Hour Cashless Adjudication Engine</p>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="hidden md:flex items-center space-x-1">
-          <button
-            onClick={() => onViewChange("queue")}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-              currentView === "queue"
-                ? "bg-slate-900 text-white shadow-sm"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            Adjudication Queue
-          </button>
-          <button
-            onClick={() => onViewChange("claims")}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-              currentView === "claims"
-                ? "bg-slate-900 text-white shadow-sm"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            Claims Explorer
-          </button>
-          <button
-            onClick={() => onViewChange("hospital")}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-              currentView === "hospital"
-                ? "bg-slate-900 text-white shadow-sm"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5" />
-            <span>Hospital Pre-Check</span>
-          </button>
-          <button
-            onClick={() => onViewChange("policies")}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-              currentView === "policies"
-                ? "bg-slate-900 text-white shadow-sm"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            Policies & Rules
-          </button>
-          <button
-            onClick={() => onViewChange("analytics")}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center space-x-1.5 ${
-              currentView === "analytics"
-                ? "bg-slate-900 text-white shadow-sm"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span>Analytics & SLA</span>
-          </button>
+        {/* Center Pill Navigation (Ronas IT style) */}
+        <nav className="hidden md:flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/60">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon
+            const isActive = currentView === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => onViewChange(item.id)}
+                className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer ${
+                  isActive
+                    ? "bg-slate-950 text-white shadow-xs font-bold"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? "text-[#A3FF12]" : "text-slate-400"}`} />
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </nav>
 
-        {/* Actions & Role Switcher */}
-        <div className="flex items-center space-x-3">
+        {/* Right Section: Actions, Role Pill & User */}
+        <div className="flex items-center space-x-2 sm:space-x-3">
+          {/* New Claim Pill Button */}
           <Button
             size="sm"
             onClick={onNewClaim}
-            className="hidden sm:inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow-sm font-semibold text-xs"
+            className="rounded-full bg-slate-950 hover:bg-slate-800 text-white font-semibold text-xs h-8.5 px-3.5 gap-1.5 shadow-xs cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>New Claim</span>
+            <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
+            <span className="hidden sm:inline">New Claim</span>
           </Button>
 
-          {/* Quick Role Switcher */}
-          <div className="flex items-center space-x-2 border-l border-slate-200 pl-3">
-            <div className="text-right hidden lg:block">
-              <div className="text-xs font-semibold text-slate-800 leading-tight">{user?.full_name}</div>
-              <div className="text-[10px] text-slate-500 font-medium capitalize">{user?.role?.replace("_", " ")}</div>
-            </div>
-
-            <select
-              value={user?.role || "adjuster"}
-              onChange={(e) => switchRole(e.target.value)}
-              className="text-xs font-medium bg-slate-100 border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-              title="Switch persona for testing different roles"
+          {/* Interactive Role Switcher Pill */}
+          <div className="relative">
+            <button
+              onClick={() => setRoleMenuOpen(!roleMenuOpen)}
+              className="flex items-center space-x-2 py-1 px-2.5 rounded-full bg-slate-100 hover:bg-slate-200/80 border border-slate-200/80 text-xs font-medium text-slate-800 transition-colors cursor-pointer"
+              title="Click to switch persona / role"
             >
-              <option value="adjuster">Adjuster</option>
-              <option value="senior_adjuster">Senior Adjuster</option>
-              <option value="admin">TPA Admin</option>
-              <option value="hospital_desk">Hospital Desk</option>
-            </select>
+              <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] font-bold">
+                {user?.full_name?.charAt(0) || "U"}
+              </div>
+              <span className="hidden lg:inline text-xs font-semibold">{user?.full_name?.split(" ")[0]}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white font-bold text-slate-700 shadow-2xs">
+                {currentRoleInfo.short}
+              </span>
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {/* Dropdown Menu */}
+            {roleMenuOpen && (
+              <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-3 py-1.5 border-b border-slate-100">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Switch Workspace Persona</p>
+                  <p className="text-xs font-semibold text-slate-800 mt-0.5">{user?.full_name}</p>
+                </div>
+
+                <div className="py-1">
+                  {ROLE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => {
+                        switchRole(opt.key)
+                        setRoleMenuOpen(false)
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 cursor-pointer ${
+                        user?.role === opt.key ? "font-bold text-blue-600 bg-blue-50/50" : "text-slate-700"
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {user?.role === opt.key && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="pt-1 border-t border-slate-100">
+                  <button
+                    onClick={() => {
+                      setRoleMenuOpen(false)
+                      logout?.()
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
+      </div>
+
+      {/* Mobile view sub-navbar */}
+      <div className="md:hidden flex items-center space-x-1 overflow-x-auto py-2 px-1">
+        {NAV_ITEMS.map((item) => {
+          const isActive = currentView === item.id
+          return (
+            <button
+              key={item.id}
+              onClick={() => onViewChange(item.id)}
+              className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-semibold cursor-pointer ${
+                isActive ? "bg-slate-950 text-white" : "bg-white text-slate-600 border border-slate-200"
+              }`}
+            >
+              {item.label}
+            </button>
+          )
+        })}
       </div>
     </header>
   )

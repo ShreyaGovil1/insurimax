@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react"
-import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw } from "lucide-react"
+import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers } from "lucide-react"
 import { api } from "../../services/api"
 import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
 import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
@@ -7,6 +7,15 @@ import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+
+const STATUS_FILTERS = [
+  { key: "all", label: "All Claims" },
+  { key: "submitted", label: "Submitted" },
+  { key: "in_review", label: "In Review" },
+  { key: "auto_approved", label: "Auto-Approved" },
+  { key: "escalated", label: "Escalated" },
+  { key: "finalized", label: "Finalized" },
+]
 
 export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
   const [claims, setClaims] = useState([])
@@ -44,13 +53,13 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
   })
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-6 py-6">
+    <div className="space-y-5 max-w-7xl mx-auto px-4 sm:px-6 py-4">
       {/* Header & New Claim CTA */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Claims Explorer</h1>
+          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Claims Explorer</h1>
           <p className="text-xs text-slate-500">
-            Search, filter, and audit all incoming and processed health insurance claims.
+            Search, filter, and audit health insurance claims across all network hospitals.
           </p>
         </div>
 
@@ -59,70 +68,69 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
             variant="outline"
             size="sm"
             onClick={loadClaims}
-            className="text-xs h-8 gap-1.5"
+            className="rounded-full text-xs h-8.5 px-3.5 gap-1.5 cursor-pointer"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
             <span>Refresh</span>
           </Button>
 
           <Button
             size="sm"
             onClick={onNewClaim}
-            className="text-xs h-8 font-semibold bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            className="rounded-full text-xs h-8.5 px-4 font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1.5 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
             <span>New Claim</span>
           </Button>
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <Card>
-        <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 w-full sm:w-auto">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="text-xs p-2 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 bg-white"
+      {/* Filter Bar with Segmented Pills & Search */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3 rounded-2xl sm:rounded-full border border-slate-200/80 shadow-2xs">
+        
+        {/* Status Pills */}
+        <div className="flex items-center space-x-1 overflow-x-auto pb-1 md:pb-0">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                statusFilter === f.key
+                  ? "bg-slate-950 text-white font-bold shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+              }`}
             >
-              <option value="all">All Claim Statuses</option>
-              <option value="submitted">Submitted</option>
-              <option value="in_review">In Review</option>
-              <option value="auto_approved">Auto-Approved</option>
-              <option value="approved">Approved</option>
-              <option value="partially_approved">Partially Approved</option>
-              <option value="queried">Queried</option>
-              <option value="escalated">Escalated</option>
-              <option value="finalized">Finalized</option>
-            </select>
-          </div>
+              {f.label}
+            </button>
+          ))}
+        </div>
 
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <Input
-              placeholder="Search claims by patient, hospital, insurer, ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 text-xs"
-            />
-          </div>
-        </CardContent>
-      </Card>
+        {/* Pill Search Input */}
+        <div className="relative w-full md:w-72">
+          <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+          <Input
+            placeholder="Search patient, hospital, claim #..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="rounded-full pl-8 h-8 text-xs border-slate-200 bg-slate-50 focus:bg-white"
+          />
+        </div>
+      </div>
 
       {/* Claims Table */}
-      <Card>
+      <Card className="rounded-3xl border-slate-200/80 shadow-xs overflow-hidden">
         <CardContent className="p-0">
           {loading ? (
-            <div className="py-16 text-center text-slate-500 text-sm">Loading claims...</div>
+            <div className="py-16 text-center text-slate-500 text-xs">Loading claims...</div>
           ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-slate-500 text-sm">
+            <div className="py-16 text-center text-slate-500 text-xs">
               No claims found matching criteria.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <tr className="bg-slate-50/70 border-b border-slate-200/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     <th className="py-3 px-4">Claim ID & Patient</th>
                     <th className="py-3 px-4">Hospital & Insurer</th>
                     <th className="py-3 px-4">Billed Amount</th>
@@ -136,63 +144,63 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
                   {filtered.map((c) => (
                     <tr
                       key={c.id}
-                      className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
+                      className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
                       onClick={() => onSelectClaim(c.id)}
                     >
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors">
                           {c.claim_number}
                         </div>
                         <div className="text-slate-600 font-medium">{c.patient_name}</div>
                       </td>
 
-                      <td className="py-3.5 px-4">
+                      <td className="py-3 px-4">
                         <div className="font-medium text-slate-800">{c.hospital_name}</div>
                         <div className="text-[11px] text-slate-500">{c.insurer_name}</div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-medium text-slate-900">
+                      <td className="py-3 px-4 font-mono font-medium text-slate-900">
                         {formatCurrencyINR(c.billed_amount)}
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-emerald-700">
+                      <td className="py-3 px-4 font-mono font-bold text-emerald-700">
                         {c.approved_amount !== null && c.approved_amount !== undefined
                           ? formatCurrencyINR(c.approved_amount)
                           : "—"}
                       </td>
 
-                      <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
+                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                         <SLAUrgencyBadge
                           slaDeadline={c.sla_deadline}
                           isBreached={c.sla_breached}
                         />
                       </td>
 
-                      <td className="py-3.5 px-4">
+                      <td className="py-3 px-4">
                         <Badge
                           variant={
-                            c.status === "auto_approved" || c.status === "approved" || c.status === "finalized"
-                              ? "success"
+                            c.status === "auto_approved" || c.status === "approved"
+                              ? "lime"
                               : c.status === "escalated"
                               ? "destructive"
                               : c.status === "queried"
                               ? "warning"
                               : "secondary"
                           }
-                          className="capitalize text-xs font-semibold"
+                          className="capitalize text-[10px] font-bold"
                         >
                           {c.status?.replace("_", " ")}
                         </Badge>
                       </td>
 
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <Button
                           size="sm"
                           onClick={() => onSelectClaim(c.id)}
-                          className="h-8 text-xs font-semibold bg-slate-900 hover:bg-blue-600 text-white gap-1"
+                          className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
                         >
                           <span>Open</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
+                          <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
                         </Button>
                       </td>
                     </tr>
