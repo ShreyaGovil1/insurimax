@@ -13,6 +13,7 @@ import {
   ShieldAlert,
   ArrowUpRight,
 } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
 import { formatCurrencyINR } from "../../lib/utils"
@@ -27,6 +28,15 @@ import { useToast } from "../ui/toast"
 export function AdjusterQueueView({ onSelectClaim }) {
   const { user } = useAuth()
   const { toast } = useToast()
+  let navigate = () => {}
+  try {
+    navigate = useNavigate()
+  } catch {}
+
+  const handleSelect = (claimId) => {
+    if (onSelectClaim) onSelectClaim(claimId)
+    if (navigate) navigate(`/claims/${claimId}`)
+  }
 
   const [activeTab, setActiveTab] = useState("assigned") // "assigned" | "unassigned"
   const [claims, setClaims] = useState([])
@@ -43,18 +53,19 @@ export function AdjusterQueueView({ onSelectClaim }) {
   const loadData = async () => {
     setLoading(true)
     try {
+      const isAdminOrSenior = user?.role === "admin" || user?.role === "senior_adjuster"
       const [queueData, unassignedData, digestData] = await Promise.all([
         api.queue.getQueue(),
-        api.queue.getUnassignedQueue(),
-        api.queue.getAdjusterDailyDigest(user?.id || "u-adj-001"),
+        isAdminOrSenior ? api.queue.getUnassignedQueue().catch(() => []) : Promise.resolve([]),
+        user?.id ? api.queue.getAdjusterDailyDigest(user.id).catch(() => null) : Promise.resolve(null),
       ])
       setClaims(queueData || [])
       setUnassignedClaims(unassignedData || [])
       setDailyDigest(digestData)
     } catch (err) {
       toast({
-        title: "Notice",
-        description: "Operating with local cached queue data",
+        title: "Queue Notice",
+        description: err.message || "Failed to load claims queue",
         variant: "default",
       })
     } finally {
@@ -282,7 +293,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
                     <tr
                       key={claim.id}
                       className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                      onClick={() => onSelectClaim(claim.id)}
+                      onClick={() => handleSelect(claim.id)}
                     >
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors">
@@ -355,7 +366,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
                         <div className="flex items-center justify-end space-x-1.5">
                           <Button
                             size="sm"
-                            onClick={() => onSelectClaim(claim.id)}
+                            onClick={() => handleSelect(claim.id)}
                             className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
                           >
                             <span>Adjudicate</span>

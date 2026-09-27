@@ -1,5 +1,7 @@
 import React, { useState } from "react"
 import { ShieldCheck, Mail, Lock, ArrowRight, Sparkles, Clock, CheckCircle2, TrendingUp, Eye, EyeOff } from "lucide-react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
 import { useToast } from "../ui/toast"
@@ -13,6 +15,16 @@ const STATS = [
 
 export function LoginPage({ onLogin }) {
   const { toast } = useToast()
+  const { login, switchRole } = useAuth()
+  let navigate = () => {}
+  let location = { state: null }
+  try {
+    navigate = useNavigate()
+    location = useLocation()
+  } catch {}
+
+  const from = location.state?.from?.pathname || "/queue"
+
   const [isRegister, setIsRegister] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -31,24 +43,48 @@ export function LoginPage({ onLogin }) {
           setLoading(false)
           return
         }
-        // Attempt API registration, then fallback to demo
-        await onLogin(email, password, fullName)
+        if (onLogin) {
+          await onLogin(email, password, fullName)
+        } else {
+          await login(email, password)
+        }
       } else {
-        await onLogin(email, password)
+        if (onLogin) {
+          await onLogin(email, password)
+        } else {
+          await login(email, password)
+        }
       }
+      if (navigate) navigate(from, { replace: true })
     } catch (err) {
       toast({
-        title: "Authentication Notice",
-        description: "Entering demo mode with sample data",
-        variant: "default",
+        title: "Authentication Failed",
+        description: err.message || "Invalid email or password",
+        variant: "destructive",
       })
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDemoLogin = (role) => {
-    onLogin(null, null, null, role)
+  const handleDemoLogin = async (role) => {
+    setLoading(true)
+    try {
+      if (onLogin) {
+        await onLogin(null, null, null, role)
+      } else {
+        await switchRole(role)
+      }
+      if (navigate) navigate(from, { replace: true })
+    } catch (err) {
+      toast({
+        title: "Login Failed",
+        description: err.message || "Could not log into account",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

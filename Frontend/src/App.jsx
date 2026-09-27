@@ -1,4 +1,13 @@
 import React, { useState } from "react"
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "react-router-dom"
 import { AuthProvider, useAuth } from "./context/AuthContext"
 import { ToastProvider } from "./components/ui/toast"
 import { LoginPage } from "./components/auth/LoginPage"
@@ -9,83 +18,67 @@ import { ClaimsExplorerView } from "./components/claims/ClaimsExplorerView"
 import { HospitalPreCheckView } from "./components/hospital/HospitalPreCheckView"
 import { PolicyLibraryView } from "./components/policies/PolicyLibraryView"
 import { AnalyticsComplianceView } from "./components/analytics/AnalyticsComplianceView"
+import { PatientStatusView } from "./components/patient/PatientStatusView"
 import { ClaimCreateModal } from "./components/claims/ClaimCreateModal"
 
-function AppContent() {
-  const { user, isAuthenticated, login, switchRole } = useAuth()
-  const [currentView, setCurrentView] = useState("queue") // "queue" | "cockpit" | "claims" | "hospital" | "policies" | "analytics"
-  const [selectedClaimId, setSelectedClaimId] = useState(null)
+/**
+ * Route guard: Redirects to /login if unauthenticated, preserving intended location
+ */
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth()
+  const location = useLocation()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F4F5F7] text-slate-500 text-xs font-semibold">
+        Loading InsuriMax Adjudication Engine...
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  return children ? children : <Outlet />
+}
+
+/**
+ * Route guard: Redirects already-authenticated users to /queue
+ */
+function PublicRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth()
+
+  if (loading) return null
+
+  if (isAuthenticated) {
+    return <Navigate to="/queue" replace />
+  }
+
+  return children ? children : <Outlet />
+}
+
+/**
+ * Main application shell with Header, Outlet, and New Claim modal
+ */
+function AppLayout() {
   const [createClaimOpen, setCreateClaimOpen] = useState(false)
-
-  const handleLogin = async (email, password, fullName, demoRole) => {
-    if (demoRole) {
-      // Instant demo login
-      switchRole(demoRole)
-      return
-    }
-    // Attempt real API login; auth context handles fallback
-    await login(email, password)
-  }
-
-  const handleSelectClaim = (claimId) => {
-    setSelectedClaimId(claimId)
-    setCurrentView("cockpit")
-  }
+  const navigate = useNavigate()
 
   const handleClaimCreated = (newClaim) => {
     if (newClaim?.id) {
-      setSelectedClaimId(newClaim.id)
-      setCurrentView("cockpit")
+      navigate(`/claims/${newClaim.id}`)
     } else {
-      setCurrentView("queue")
+      navigate("/queue")
     }
   }
 
-  // Show login page if not authenticated
-  if (!isAuthenticated) {
-    return <LoginPage onLogin={handleLogin} />
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <Header
-        currentView={currentView}
-        onViewChange={(view) => {
-          setCurrentView(view)
-          if (view !== "cockpit") setSelectedClaimId(null)
-        }}
-        onNewClaim={() => setCreateClaimOpen(true)}
-      />
+    <div className="min-h-screen bg-[#F4F5F7] flex flex-col">
+      <Header onNewClaim={() => setCreateClaimOpen(true)} />
 
       <main className="flex-1 pb-12">
-        {currentView === "queue" && (
-          <AdjusterQueueView onSelectClaim={handleSelectClaim} />
-        )}
-
-        {currentView === "cockpit" && selectedClaimId && (
-          <AdjudicationCockpit
-            claimId={selectedClaimId}
-            onBack={() => {
-              setCurrentView("queue")
-              setSelectedClaimId(null)
-            }}
-          />
-        )}
-
-        {currentView === "claims" && (
-          <ClaimsExplorerView
-            onSelectClaim={handleSelectClaim}
-            onNewClaim={() => setCreateClaimOpen(true)}
-          />
-        )}
-
-        {currentView === "hospital" && (
-          <HospitalPreCheckView onClaimCreated={handleClaimCreated} />
-        )}
-
-        {currentView === "policies" && <PolicyLibraryView />}
-
-        {currentView === "analytics" && <AnalyticsComplianceView />}
+        <Outlet context={{ openCreateClaim: () => setCreateClaimOpen(true) }} />
       </main>
 
       <ClaimCreateModal
@@ -99,10 +92,58 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <ToastProvider>
+          <Routes>
+            {/* Public Login Route */}
+            <Route
+              path="/login"
+              element={
+                <PublicRoute>
+                  <LoginPage />
+                </PublicRoute>
+              }
+            />
+
+            {/* Patient Tracker (Public or Authenticated) */}
+            <Route element={<AppLayout />}>
+              <Route path="/patient" element={<PatientStatusView />} />
+              <Route path="/patient/:claimId" element={<PatientStatusView />} />
+            </Route>
+
+            {/* Protected Workspace Routes */}
+            <Route
+              element={
+                <ProtectedRoute>
+                  <AppLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="/queue" replace />} />
+              <Route path="queue" element={<AdjusterQueueView />} />
+              <Route
+                path="claims"
+                element={
+                  <ClaimsExplorerView
+                    onNewClaim={() => {
+                      const btn = document.querySelector('[data-action="new-claim"]')
+                      btn?.click()
+                    }}
+                  />
+                }
+              />
+              <Route path="claims/:claimId" element={<AdjudicationCockpit />} />
+              <Route path="hospital" element={<HospitalPreCheckView />} />
+              <Route path="policies" element={<PolicyLibraryView />} />
+              <Route path="analytics" element={<AnalyticsComplianceView />} />
+            </Route>
+
+            {/* 404 / Catch-all Route */}
+            <Route path="*" element={<Navigate to="/queue" replace />} />
+          </Routes>
+        </ToastProvider>
+      </AuthProvider>
+    </BrowserRouter>
   )
 }

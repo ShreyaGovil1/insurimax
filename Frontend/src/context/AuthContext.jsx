@@ -1,5 +1,5 @@
 import * as React from "react"
-import { api, DEMO_USERS, getCurrentStoredUser, setCurrentStoredUser, clearTokens } from "../services/api"
+import { api, DEMO_CREDENTIALS, getCurrentStoredUser, setCurrentStoredUser, clearTokens } from "../services/api"
 
 const AuthContext = React.createContext(null)
 
@@ -9,12 +9,11 @@ export function AuthProvider({ children }) {
   })
   const [loading, setLoading] = React.useState(false)
 
-  // Switch role helper for instant demo and pair programming verification
-  const switchRole = (roleKey) => {
-    const targetUser = DEMO_USERS[roleKey]
-    if (targetUser) {
-      setUser(targetUser)
-      setCurrentStoredUser(targetUser)
+  // Switch role helper — logs into real database user account
+  const switchRole = async (roleKey) => {
+    const cred = DEMO_CREDENTIALS[roleKey]
+    if (cred) {
+      return await login(cred.email, cred.password)
     }
   }
 
@@ -27,12 +26,6 @@ export function AuthProvider({ children }) {
         setCurrentStoredUser(res.user)
       }
       return res
-    } catch {
-      // Fallback to demo adjuster on failed login
-      const demo = DEMO_USERS.adjuster
-      setUser(demo)
-      setCurrentStoredUser(demo)
-      return { user: demo }
     } finally {
       setLoading(false)
     }
