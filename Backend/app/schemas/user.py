@@ -4,7 +4,7 @@ User and Organization Pydantic schemas.
 import uuid
 from datetime import datetime
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 
 from app.models.user import OrgType, UserRole
 from app.schemas.common import BaseSchema
@@ -50,6 +50,16 @@ class UserCreate(BaseSchema):
     role: UserRole = UserRole.ADJUSTER
     org_id: uuid.UUID | None = None
 
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError(
+                "Password must be 72 bytes or fewer (bcrypt limit). "
+                "Shorten your password."
+            )
+        return v
+
 
 class UserRead(BaseSchema):
     id: uuid.UUID
@@ -91,3 +101,29 @@ class RegisterOrgRequest(BaseSchema):
     """Register an organisation AND its first admin user in one call."""
     org: OrganizationCreate
     admin_user: UserCreate
+
+
+class RegisterRequest(BaseSchema):
+    """Standalone user self-registration (no org creation required)."""
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    full_name: str = Field(..., min_length=2, max_length=255)
+    org_id: uuid.UUID | None = None  # optionally join an existing org
+
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError(
+                "Password must be 72 bytes or fewer (bcrypt limit). "
+                "Shorten your password."
+            )
+        return v
+
+
+class RegisterResponse(BaseSchema):
+    user: UserRead
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int

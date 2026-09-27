@@ -22,6 +22,8 @@ from app.schemas.user import (
     LoginRequest,
     RefreshRequest,
     RegisterOrgRequest,
+    RegisterRequest,
+    RegisterResponse,
     TokenResponse,
     UserRead,
     UserUpdate,
@@ -33,6 +35,47 @@ users_router = APIRouter(prefix="/users", tags=["Auth & Identity"])
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user account",
+)
+async def register(body: RegisterRequest, db: DBSession):
+    """
+    Create a new user account and return tokens so the user is
+    immediately signed in after registration.
+
+    - Role defaults to `adjuster`; users cannot self-assign admin/senior roles.
+    - Optionally supply `org_id` to join an existing organisation.
+    - To create a brand-new organisation at the same time, use
+      `POST /auth/register-org` instead.
+    """
+    from app.schemas.user import UserCreate
+
+    user_data = UserCreate(
+        email=body.email,
+        password=body.password,
+        full_name=body.full_name,
+        role=UserRole.ADJUSTER,   # self-registered users always start as adjuster
+        org_id=body.org_id,
+    )
+
+    try:
+        user = await user_service.create_user(db, user_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    tokens = user_service.generate_tokens(user)
+    return RegisterResponse(
+        user=UserRead.model_validate(user),
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        token_type=tokens["token_type"],
+        expires_in=tokens["expires_in"],
+    )
+
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: DBSession):

@@ -149,3 +149,5 @@ async def health_check():
 async def readiness_check():
     """Readiness probe — used by Cloud Run to decide when to route traffic."""
     return {"ready": True}
+
+# uv run uvicorn main:app --reload --port 8000

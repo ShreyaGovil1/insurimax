@@ -4,22 +4,37 @@ JWT creation/verification and password hashing utilities.
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt hard-limits input to 72 bytes. Newer versions of the bcrypt package
+# raise ValueError instead of silently truncating, so we handle the slice
+# ourselves — in bytes, not characters, to handle multi-byte Unicode correctly.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _prepare_password(password: str) -> bytes:
+    """Encode to UTF-8 and truncate to 72 bytes, safely handling multi-byte chars."""
+    encoded = password.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_BYTES:
+        encoded = encoded[:_BCRYPT_MAX_BYTES]
+        # Drop any partial multi-byte sequence at the cut point
+        encoded = encoded.decode("utf-8", errors="ignore").encode("utf-8")
+    return encoded
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    pw_bytes = _prepare_password(password)
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    pw_bytes = _prepare_password(plain)
+    return bcrypt.checkpw(pw_bytes, hashed.encode("utf-8"))
 
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
