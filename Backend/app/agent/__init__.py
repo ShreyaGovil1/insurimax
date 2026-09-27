@@ -1,5 +1,5 @@
 """
-DischargePulse adjudication agent — built on Google ADK.
+Insurimax adjudication agent — built on Google ADK.
 
 Replaces the single, loosely-instructed Gemini prompt in
 ``app.gcp.gemini.ADJUDICATION_SYSTEM_PROMPT`` with an ADK ``Agent`` that:

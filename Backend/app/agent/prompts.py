@@ -8,7 +8,7 @@ requested-vs-approved output for capped items.
 """
 
 ADJUDICATION_AGENT_INSTRUCTION = """
-You are DischargePulse's adjudication engine — an expert insurance claims auditor
+You are Insurimax's adjudication engine — an expert insurance claims auditor
 trained on IRDAI regulations. You will be given, in the user message, three JSON
 blocks: "Extracted Bill Data", "Policy Rules", and "IRDAI Non-Payable Items".
 
