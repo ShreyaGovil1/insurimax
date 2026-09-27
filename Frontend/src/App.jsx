@@ -1,122 +1,108 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useState } from "react"
+import { AuthProvider, useAuth } from "./context/AuthContext"
+import { ToastProvider } from "./components/ui/toast"
+import { LoginPage } from "./components/auth/LoginPage"
+import { Header } from "./components/common/Header"
+import { AdjusterQueueView } from "./components/queue/AdjusterQueueView"
+import { AdjudicationCockpit } from "./components/adjudication/AdjudicationCockpit"
+import { ClaimsExplorerView } from "./components/claims/ClaimsExplorerView"
+import { HospitalPreCheckView } from "./components/hospital/HospitalPreCheckView"
+import { PolicyLibraryView } from "./components/policies/PolicyLibraryView"
+import { AnalyticsComplianceView } from "./components/analytics/AnalyticsComplianceView"
+import { ClaimCreateModal } from "./components/claims/ClaimCreateModal"
 
-function App() {
-  const [count, setCount] = useState(0)
+function AppContent() {
+  const { user, isAuthenticated, login, switchRole } = useAuth()
+  const [currentView, setCurrentView] = useState("queue") // "queue" | "cockpit" | "claims" | "hospital" | "policies" | "analytics"
+  const [selectedClaimId, setSelectedClaimId] = useState(null)
+  const [createClaimOpen, setCreateClaimOpen] = useState(false)
+
+  const handleLogin = async (email, password, fullName, demoRole) => {
+    if (demoRole) {
+      // Instant demo login
+      switchRole(demoRole)
+      return
+    }
+    // Attempt real API login; auth context handles fallback
+    await login(email, password)
+  }
+
+  const handleSelectClaim = (claimId) => {
+    setSelectedClaimId(claimId)
+    setCurrentView("cockpit")
+  }
+
+  const handleClaimCreated = (newClaim) => {
+    if (newClaim?.id) {
+      setSelectedClaimId(newClaim.id)
+      setCurrentView("cockpit")
+    } else {
+      setCurrentView("queue")
+    }
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={handleLogin} />
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <Header
+        currentView={currentView}
+        onViewChange={(view) => {
+          setCurrentView(view)
+          if (view !== "cockpit") setSelectedClaimId(null)
+        }}
+        onNewClaim={() => setCreateClaimOpen(true)}
+      />
 
-      <div className="ticks"></div>
+      <main className="flex-1 pb-12">
+        {currentView === "queue" && (
+          <AdjusterQueueView onSelectClaim={handleSelectClaim} />
+        )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        {currentView === "cockpit" && selectedClaimId && (
+          <AdjudicationCockpit
+            claimId={selectedClaimId}
+            onBack={() => {
+              setCurrentView("queue")
+              setSelectedClaimId(null)
+            }}
+          />
+        )}
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+        {currentView === "claims" && (
+          <ClaimsExplorerView
+            onSelectClaim={handleSelectClaim}
+            onNewClaim={() => setCreateClaimOpen(true)}
+          />
+        )}
+
+        {currentView === "hospital" && (
+          <HospitalPreCheckView onClaimCreated={handleClaimCreated} />
+        )}
+
+        {currentView === "policies" && <PolicyLibraryView />}
+
+        {currentView === "analytics" && <AnalyticsComplianceView />}
+      </main>
+
+      <ClaimCreateModal
+        open={createClaimOpen}
+        onOpenChange={setCreateClaimOpen}
+        onClaimCreated={handleClaimCreated}
+      />
+    </div>
   )
 }
 
-export default App
+export default function App() {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
+    </AuthProvider>
+  )
+}

@@ -1,5 +1,5 @@
 """
-DischargePulse — FastAPI application entry point.
+InsuriMax — FastAPI application entry point.
 
 Architecture:
   - Database : Cloud SQL / AlloyDB (PostgreSQL) via asyncpg + SQLAlchemy 2
@@ -22,13 +22,13 @@ logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
-logger = logging.getLogger("dischargepulse")
+logger = logging.getLogger("insurimax")
 
 
 # ── Lifespan: startup / shutdown hooks ────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 DischargePulse starting up — env=%s", settings.ENVIRONMENT)
+    logger.info("🚀 InsuriMax starting up — env=%s", settings.ENVIRONMENT)
 
     # Optional: run Alembic migrations automatically on startup
     # Uncomment for Cloud Run where you can't run migrations manually before deploy
@@ -48,14 +48,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("👋 DischargePulse shutting down")
+    logger.info("👋 InsuriMax shutting down")
     from app.db.session import engine
     await engine.dispose()
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="DischargePulse API",
+    title="InsuriMax API",
     description=(
         "AI-powered insurance claims adjudication platform. "
         "Reduces TPA adjudication time from 3+ hours to under 30 minutes "
@@ -112,7 +112,7 @@ app.include_router(api_router)
 @app.get("/", tags=["Health"])
 async def root():
     return {
-        "service": "DischargePulse API",
+        "service": "InsuriMax API",
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "status": "healthy",

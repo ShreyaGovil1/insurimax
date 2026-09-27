@@ -162,7 +162,7 @@ def _safe_parse_json(text: str) -> dict | list:
 # ── Specialised prompt builders ───────────────────────────────────────────────
 
 EXTRACTION_SYSTEM_PROMPT = """
-You are DischargePulse's document extraction engine.
+You are InsuriMax's document extraction engine.
 Extract structured data from the provided hospital documents (itemized bill, prescription, discharge summary).
 Return ONLY valid JSON — no markdown, no explanation, no prose.
 
@@ -205,7 +205,7 @@ Output schema:
 """
 
 ADJUDICATION_SYSTEM_PROMPT = """
-You are DischargePulse's adjudication engine — an expert insurance claims auditor trained on IRDAI regulations.
+You are InsuriMax's adjudication engine — an expert insurance claims auditor trained on IRDAI regulations.
 You will receive:
 1. Extracted hospital bill data (JSON)
 2. The applicable insurance policy rules (JSON)
@@ -262,7 +262,7 @@ Output schema:
 """
 
 PRE_CHECK_SYSTEM_PROMPT = """
-You are DischargePulse's pre-submission checker for hospital billing desks.
+You are InsuriMax's pre-submission checker for hospital billing desks.
 Review the submitted bill against the patient's policy BEFORE formal claim submission.
 Identify likely deductions, non-payable items, and missing documentation so the hospital can correct or annotate upfront.
 

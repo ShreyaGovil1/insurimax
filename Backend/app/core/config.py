@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ──────────────────────────────────────────────────────────────────
-    APP_NAME: str = "DischargePulse"
+    APP_NAME: str = "InsuriMax"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = True
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # Use Cloud SQL Auth Proxy socket path in GCP, or a direct URL locally
     DB_HOST: str = "127.0.0.1"
     DB_PORT: int = 5432
-    DB_NAME: str = "dischargepulse"
+    DB_NAME: str = "insurimax"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
     # Override the whole URL if preferred (takes precedence)
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str | None = None  # fallback for local dev
 
     # ── GCS ───────────────────────────────────────────────────────────────────
-    GCS_BUCKET_NAME: str = "dischargepulse-documents"
+    GCS_BUCKET_NAME: str = "insurimax-documents"
     GCS_SIGNED_URL_EXPIRY_MINUTES: int = 30
 
     # ── Vertex AI / Gemini ────────────────────────────────────────────────────
