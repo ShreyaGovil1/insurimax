@@ -30,14 +30,21 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── Database (Cloud SQL / AlloyDB - PostgreSQL wire protocol) ────────────
-    # Use Cloud SQL Auth Proxy socket path in GCP, or a direct URL locally
     DB_HOST: str = "127.0.0.1"
     DB_PORT: int = 5432
     DB_NAME: str = "insurimax"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
-    # Override the whole URL if preferred (takes precedence)
     DATABASE_URL: str | None = None
+
+    # ── Connection pool ────────────────────────────────────────────────────────
+    # NullPool = one new TCP+SSL connection per request (good for Cloud Run,
+    # terrible for local dev or any persistent server). Use a real pool instead.
+    # Set DB_POOL_SIZE=0 to force NullPool (e.g. on Cloud Run).
+    DB_POOL_SIZE: int = 5          # persistent connections kept alive
+    DB_MAX_OVERFLOW: int = 10      # extra connections allowed under load
+    DB_POOL_TIMEOUT: int = 30      # seconds to wait for a connection from pool
+    DB_POOL_RECYCLE: int = 1800    # recycle connections after 30 min (avoids stale)
 
     @property
     def async_database_url(self) -> str:
@@ -87,6 +94,16 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:3000",
     ]
+
+    # ── Observability / OpenTelemetry ─────────────────────────────────────────
+    # Exporter: "gcp" (Cloud Trace), "otlp" (any OTLP collector), "console", "none"
+    OTEL_EXPORTER: str = "console"
+    OTEL_SERVICE_NAME: str = "dischargepulse-api"
+    OTEL_SERVICE_VERSION: str = "1.0.0"
+    # OTLP endpoint when OTEL_EXPORTER=otlp (e.g. local collector or Grafana Cloud)
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
+    # Sampling ratio 0.0-1.0 (1.0 = trace every request, 0.1 = 10%)
+    OTEL_SAMPLE_RATE: float = 1.0
 
 
 @lru_cache

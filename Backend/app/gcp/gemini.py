@@ -15,8 +15,10 @@ from functools import lru_cache
 from typing import Any
 
 from app.core.config import settings
+from app.core.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer(__name__)
 
 
 # ── Client factory ────────────────────────────────────────────────────────────
@@ -72,13 +74,25 @@ async def generate_json(
     chosen_model = model_name or settings.GEMINI_MODEL
     loop = asyncio.get_event_loop()
 
-    def _call() -> tuple[dict | list, int, int]:
-        if settings.VERTEX_AI_ENABLED:
-            return _call_vertex(chosen_model, prompt, inline_data)
-        else:
-            return _call_genai(chosen_model, prompt, inline_data)
+    with _tracer.start_as_current_span("gemini.generate_json") as span:
+        span.set_attribute("gemini.model", chosen_model)
+        span.set_attribute("gemini.has_inline_data", inline_data is not None)
+        span.set_attribute("gemini.inline_data_count", len(inline_data) if inline_data else 0)
+        span.set_attribute("gemini.prompt_length", len(prompt))
 
-    return await loop.run_in_executor(None, _call)
+        def _call() -> tuple[dict | list, int, int]:
+            if settings.VERTEX_AI_ENABLED:
+                return _call_vertex(chosen_model, prompt, inline_data)
+            else:
+                return _call_genai(chosen_model, prompt, inline_data)
+
+        result, prompt_tokens, completion_tokens = await loop.run_in_executor(None, _call)
+
+        span.set_attribute("gemini.prompt_tokens", prompt_tokens)
+        span.set_attribute("gemini.completion_tokens", completion_tokens)
+        span.set_attribute("gemini.total_tokens", prompt_tokens + completion_tokens)
+
+        return result, prompt_tokens, completion_tokens
 
 
 def _call_genai(

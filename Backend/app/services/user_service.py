@@ -8,8 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
+from app.core.telemetry import add_span_attributes, get_tracer
 from app.models.user import Organization, OrgType, User, UserRole
 from app.schemas.user import OrganizationCreate, RegisterOrgRequest, UserCreate
+
+_tracer = get_tracer(__name__)
 
 
 async def create_organization(db: AsyncSession, data: OrganizationCreate) -> Organization:
@@ -53,18 +56,33 @@ async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
-    user = await get_user_by_email(db, email)
-    if not user:
-        return None
-    if not verify_password(password, user.hashed_password):
-        return None
-    if not user.is_active:
-        return None
+    with _tracer.start_as_current_span("auth.authenticate_user") as span:
+        span.set_attribute("user.email_domain", email.split("@")[-1])
 
-    # Update last login
-    user.last_login_at = datetime.now(timezone.utc)
-    await db.flush()
-    return user
+        with _tracer.start_as_current_span("auth.db_lookup"):
+            user = await get_user_by_email(db, email)
+
+        if not user:
+            span.set_attribute("auth.result", "user_not_found")
+            return None
+
+        with _tracer.start_as_current_span("auth.bcrypt_verify"):
+            password_ok = verify_password(password, user.hashed_password)
+
+        if not password_ok:
+            span.set_attribute("auth.result", "wrong_password")
+            return None
+
+        if not user.is_active:
+            span.set_attribute("auth.result", "inactive_user")
+            return None
+
+        span.set_attribute("auth.result", "success")
+        span.set_attribute("user.role", user.role.value)
+
+        user.last_login_at = datetime.now(timezone.utc)
+        await db.flush()
+        return user
 
 
 def generate_tokens(user: User) -> dict:
