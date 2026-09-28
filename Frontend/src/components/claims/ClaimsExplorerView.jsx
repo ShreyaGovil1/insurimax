@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
 import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
@@ -18,6 +19,15 @@ const STATUS_FILTERS = [
 ]
 
 export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
+  let navigate = () => {}
+  try {
+    navigate = useNavigate()
+  } catch {}
+
+  const handleSelect = (claimId) => {
+    if (onSelectClaim) onSelectClaim(claimId)
+    if (navigate) navigate(`/claims/${claimId}`)
+  }
   const [claims, setClaims] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState("all")
@@ -145,7 +155,7 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
                     <tr
                       key={c.id}
                       className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                      onClick={() => onSelectClaim(c.id)}
+                      onClick={() => handleSelect(c.id)}
                     >
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors">
@@ -196,7 +206,7 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
                       <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <Button
                           size="sm"
-                          onClick={() => onSelectClaim(c.id)}
+                          onClick={() => handleSelect(c.id)}
                           className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
                         >
                           <span>Open</span>

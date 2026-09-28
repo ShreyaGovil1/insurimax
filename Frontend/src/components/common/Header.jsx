@@ -13,17 +13,20 @@ import {
   Bell,
   CheckCircle2,
   Circle,
+  UserCheck,
 } from "lucide-react"
+import { useLocation, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 
 const NAV_ITEMS = [
-  { id: "queue", label: "Adjudication Queue", icon: Layers },
-  { id: "claims", label: "Claims Explorer", icon: FileSpreadsheet },
-  { id: "hospital", label: "Hospital Pre-Check", icon: Building2 },
-  { id: "policies", label: "Policies & Rules", icon: ShieldCheck },
-  { id: "analytics", label: "Analytics & SLA", icon: Activity },
+  { id: "queue", path: "/queue", label: "Queue", icon: Layers },
+  { id: "claims", path: "/claims", label: "Claims", icon: FileSpreadsheet },
+  { id: "hospital", path: "/hospital", label: "Hospital", icon: Building2 },
+  { id: "patient", path: "/patient", label: "Patient", icon: UserCheck },
+  { id: "policies", path: "/policies", label: "Policies", icon: ShieldCheck },
+  { id: "analytics", path: "/analytics", label: "Analytics & Audit", icon: Activity },
 ]
 
 const ROLE_OPTIONS = [
@@ -36,8 +39,39 @@ const ROLE_OPTIONS = [
 export function Header({ currentView, onViewChange, onNewClaim }) {
   const { user, switchRole, logout } = useAuth()
   const [roleMenuOpen, setRoleMenuOpen] = useState(false)
+  
+  let location = { pathname: "/queue" }
+  let navigate = () => {}
+  try {
+    location = useLocation()
+    navigate = useNavigate()
+  } catch {}
 
   const currentRoleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
+
+  const handleNavigate = (item) => {
+    if (onViewChange) onViewChange(item.id)
+    if (navigate) navigate(item.path)
+  }
+
+  const handleBrandClick = () => {
+    if (onViewChange) onViewChange("queue")
+    if (navigate) navigate("/queue")
+  }
+
+  const handleLogout = async () => {
+    setRoleMenuOpen(false)
+    await logout?.()
+    if (navigate) navigate("/login")
+  }
+
+  const isItemActive = (item) => {
+    if (currentView) return currentView === item.id
+    if (location.pathname === item.path) return true
+    if (item.id === "queue" && (location.pathname === "/" || location.pathname === "")) return true
+    if (item.id === "claims" && location.pathname.startsWith("/claims")) return true
+    return location.pathname.startsWith(item.path)
+  }
 
   return (
     <header className="sticky top-0 z-40 w-full px-4 sm:px-6 pt-3 pb-2 transition-all">
@@ -46,7 +80,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
         {/* Brand & Live SLA status */}
         <div
           className="flex items-center space-x-3 cursor-pointer select-none group"
-          onClick={() => onViewChange("queue")}
+          onClick={handleBrandClick}
         >
           <div className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-950 text-white shadow-xs group-hover:scale-105 transition-transform">
             <ShieldCheck className="w-5 h-5 text-[#A3FF12]" />
@@ -66,11 +100,11 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
         <nav className="hidden md:flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/60">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
-            const isActive = currentView === item.id
+            const isActive = isItemActive(item)
             return (
               <button
                 key={item.id}
-                onClick={() => onViewChange(item.id)}
+                onClick={() => handleNavigate(item)}
                 className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer ${
                   isActive
                     ? "bg-slate-950 text-white shadow-xs font-bold"
@@ -141,10 +175,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
 
                 <div className="pt-1 border-t border-slate-100">
                   <button
-                    onClick={() => {
-                      setRoleMenuOpen(false)
-                      logout?.()
-                    }}
+                    onClick={handleLogout}
                     className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 flex items-center space-x-1.5 cursor-pointer"
                   >
                     <LogOut className="w-3.5 h-3.5" />
@@ -160,11 +191,11 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
       {/* Mobile view sub-navbar */}
       <div className="md:hidden flex items-center space-x-1 overflow-x-auto py-2 px-1">
         {NAV_ITEMS.map((item) => {
-          const isActive = currentView === item.id
+          const isActive = isItemActive(item)
           return (
             <button
               key={item.id}
-              onClick={() => onViewChange(item.id)}
+              onClick={() => handleNavigate(item)}
               className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-semibold cursor-pointer ${
                 isActive ? "bg-slate-950 text-white" : "bg-white text-slate-600 border border-slate-200"
               }`}

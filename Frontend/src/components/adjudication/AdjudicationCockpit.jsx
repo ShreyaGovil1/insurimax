@@ -20,6 +20,7 @@ import {
   Printer,
   Edit3,
 } from "lucide-react"
+import { useParams, useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
 import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
@@ -33,8 +34,25 @@ import { useToast } from "../ui/toast"
 import { DocumentExtractionView } from "../documents/DocumentExtractionView"
 import { ClaimQueriesView } from "../queries/ClaimQueriesView"
 
-export function AdjudicationCockpit({ claimId, onBack }) {
+export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }) {
   const { toast } = useToast()
+  let params = {}
+  let navigate = () => {}
+  try {
+    params = useParams() || {}
+    navigate = useNavigate()
+  } catch {
+    // Fallback if rendered outside Router context (e.g. standalone test)
+  }
+
+  const claimId = propClaimId || params.claimId
+  const handleBack = () => {
+    if (propOnBack) {
+      propOnBack()
+    } else if (navigate) {
+      navigate("/queue")
+    }
+  }
 
   const [activeTab, setActiveTab] = useState("adjudication") // "adjudication" | "documents" | "queries"
   const [claim, setClaim] = useState(null)
@@ -276,10 +294,10 @@ export function AdjudicationCockpit({ claimId, onBack }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={onBack}
-            className="h-8 px-2.5 text-xs text-slate-700"
+            onClick={handleBack}
+            className="rounded-full h-8 px-3 text-xs text-slate-700 cursor-pointer"
           >
-            <ArrowLeft className="w-4 h-4 mr-1" />
+            <ArrowLeft className="w-3.5 h-3.5 mr-1" />
             <span>Back to Queue</span>
           </Button>
 

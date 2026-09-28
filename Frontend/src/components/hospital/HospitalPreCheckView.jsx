@@ -15,6 +15,7 @@ import {
   TrendingDown,
   Info,
 } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { formatCurrencyINR } from "../../lib/utils"
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
@@ -55,6 +56,10 @@ const QUICK_SCENARIOS = [
 
 export function HospitalPreCheckView({ onClaimCreated }) {
   const { toast } = useToast()
+  let navigate = () => {}
+  try {
+    navigate = useNavigate()
+  } catch {}
   const [running, setRunning] = useState(false)
   const [preCheckResult, setPreCheckResult] = useState(null)
   const [templates, setTemplates] = useState([])
@@ -100,7 +105,7 @@ export function HospitalPreCheckView({ onClaimCreated }) {
       formData.append("policy_number", form.policy_number)
       formData.append("billed_amount", form.billed_amount)
       if (uploadedFile) {
-        formData.append("file", uploadedFile)
+        formData.append("bill_file", uploadedFile)
       }
 
       const result = await api.hospital.runPreCheck(formData)
@@ -136,7 +141,10 @@ export function HospitalPreCheckView({ onClaimCreated }) {
         description: `Claim ${newClaim.claim_number} logged! 3-Hour SLA initiated.`,
         variant: "success",
       })
-      onClaimCreated?.(newClaim)
+      if (onClaimCreated) onClaimCreated(newClaim)
+      if (newClaim?.id && navigate) {
+        navigate(`/claims/${newClaim.id}`)
+      }
     } catch (err) {
       toast({
         title: "Submission Failed",

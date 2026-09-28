@@ -1,5 +1,5 @@
 """
-Builds and runs the DischargePulse adjudication agent (Google ADK).
+Builds and runs the Insurimax adjudication agent (Google ADK).
 
 Public entry point: ``run_adjudication_agent`` — mirrors the return shape of
 ``app.gcp.gemini.generate_json`` (parsed_json, prompt_tokens,
@@ -24,7 +24,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_APP_NAME = "dischargepulse-adjudication"
+_APP_NAME = "Insurimax-adjudication"
 
 
 def _configure_google_genai_auth() -> None:
@@ -57,7 +57,7 @@ def _build_agent(non_payable_items: list[dict]):
     check_non_payable_item.__name__ = "check_non_payable_item"
 
     return Agent(
-        name="dischargepulse_adjudicator",
+        name="Insurimax_adjudicator",
         model=settings.GEMINI_MODEL,
         description=(
             "Audits a hospital discharge claim's line items against policy "
