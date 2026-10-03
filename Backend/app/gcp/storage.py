@@ -11,6 +11,7 @@ from typing import BinaryIO
 
 from google.cloud import storage
 from google.cloud.storage import Blob
+from google.auth.credentials import AnonymousCredentials
 
 from app.core.config import settings
 
@@ -24,7 +25,10 @@ def _get_gcs_client() -> storage.Client:
             project=settings.GOOGLE_CLOUD_PROJECT,
         )
     # In GCP (Cloud Run / GCE) this picks up the attached service account automatically
-    return storage.Client(project=settings.GOOGLE_CLOUD_PROJECT)
+    return storage.Client(
+        project=settings.GOOGLE_CLOUD_PROJECT,
+        credentials=AnonymousCredentials()
+    )
 
 
 def _get_bucket() -> storage.Bucket:

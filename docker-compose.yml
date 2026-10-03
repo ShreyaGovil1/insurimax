@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: ./Backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./Backend/.env
+    environment:
+      # Presence of this variable switches the app to the emulator
+      STORAGE_EMULATOR_HOST: http://gcs:4443
+      GCS_BUCKET: demo-bucket
+    volumes:
+      - ./Backend:/app    # live code reload in dev
+      - /app/.venv        # keep the image's venv; don't let the host folder shadow it
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - gcs
+
+  gcs:
+    image: fsouza/fake-gcs-server
+    # external-url must be reachable from the api container (needed for resumable uploads)
+    command: ["-scheme", "http", "-port", "4443", "-external-url", "http://gcs:4443"]
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./gcs-data:/data  # persists emulated buckets/objects between restarts
