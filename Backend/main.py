@@ -169,3 +169,5 @@ async def health_check():
 @app.get("/ready", tags=["Health"])
 async def readiness_check():
     return {"ready": True}
+
+#uvicorn main:app --host 0.0.0.0 --port 8000

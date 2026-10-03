@@ -23,7 +23,6 @@ dependencies = [
     "google-generativeai>=0.8.0",
     "google-auth>=2.29.0",
     "google-cloud-secret-manager>=2.20.0",
-
     # LangChain (already in project)
     "langchain>=0.2.0",
     "langchain-google-genai>=1.0.0",
@@ -44,7 +43,6 @@ dependencies = [
     "pypdf>=4.2.0",
     "jose>=1.0.0",
     "google-adk>=1.0.0",
-
     # Observability — OpenTelemetry
     "opentelemetry-api>=1.25.0",
     "opentelemetry-sdk>=1.25.0",
@@ -54,6 +52,7 @@ dependencies = [
     "opentelemetry-instrumentation-logging>=0.46b0",
     "opentelemetry-exporter-gcp-trace>=1.6.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "playwright>=1.63.0",
 ]
 
 [build-system]
