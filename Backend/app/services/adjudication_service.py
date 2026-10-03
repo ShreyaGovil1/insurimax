@@ -181,6 +181,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
 
         # Check auto-approval thresholds
         auto_approvable = summary.get("auto_approvable", False)
+        auto_approvable = False
         if (
             auto_approvable
             and adj.confidence_score >= settings.AUTO_APPROVAL_CONFIDENCE_THRESHOLD

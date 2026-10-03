@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # ── Security ─────────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(default="change-me-in-production-use-a-long-random-string")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── Database (Cloud SQL / AlloyDB - PostgreSQL wire protocol) ────────────
@@ -98,12 +98,14 @@ class Settings(BaseSettings):
     # ── Observability / OpenTelemetry ─────────────────────────────────────────
     # Exporter: "gcp" (Cloud Trace), "otlp" (any OTLP collector), "console", "none"
     OTEL_EXPORTER: str = "console"
-    OTEL_SERVICE_NAME: str = "dischargepulse-api"
+    OTEL_SERVICE_NAME: str = "insurimax-api"
     OTEL_SERVICE_VERSION: str = "1.0.0"
     # OTLP endpoint when OTEL_EXPORTER=otlp (e.g. local collector or Grafana Cloud)
     OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
     # Sampling ratio 0.0-1.0 (1.0 = trace every request, 0.1 = 10%)
     OTEL_SAMPLE_RATE: float = 1.0
+
+    STORAGE_EMULATOR_HOST = 
 
 
 @lru_cache
