@@ -92,9 +92,13 @@ async def list_claims(
     count_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = count_result.scalar_one()
 
-    query = query.order_by(Claim.sla_deadline.asc().nulls_last()).offset(
-        (page - 1) * page_size
-    ).limit(page_size)
+    query = (
+        query
+        .options(selectinload(Claim.adjudication_result))
+        .order_by(Claim.sla_deadline.asc().nulls_last())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
 
     result = await db.execute(query)
     return result.scalars().all(), total

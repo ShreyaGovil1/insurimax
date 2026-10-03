@@ -97,12 +97,13 @@ class AdjudicationResult(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    claim: Mapped["Claim"] = relationship("Claim", back_populates="adjudication_result")  # noqa: F821
+    claim: Mapped["Claim"] = relationship("Claim", back_populates="adjudication_result", lazy="raise")  # noqa: F821
     line_items: Mapped[list["LineItemDecision"]] = relationship(
         "LineItemDecision",
         back_populates="adjudication_result",
         cascade="all, delete-orphan",
         order_by="LineItemDecision.line_number",
+        lazy="raise",  # force explicit selectinload — never lazy load in async context
     )
 
 
