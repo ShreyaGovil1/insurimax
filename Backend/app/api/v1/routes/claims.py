@@ -81,7 +81,9 @@ async def list_claims(
     # Build summary items — merge adjudication flagged count if available
     summaries: list[ClaimSummary] = []
     for c in claims:
-        adj = c.adjudication_result if hasattr(c, "adjudication_result") else None
+        # adjudication_result is now eagerly loaded by list_claims — access it
+        # directly from the instance dict to avoid any lazy-load attempt.
+        adj = c.__dict__.get("adjudication_result")
         summaries.append(
             ClaimSummary(
                 id=c.id,

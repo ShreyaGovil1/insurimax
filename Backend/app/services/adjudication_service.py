@@ -206,7 +206,16 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         await db.flush()
         raise
 
-    return adj
+    # Re-fetch with line_items eagerly loaded — the adj object returned from
+    # run_adjudication() was loaded via Claim.adjudication_result which does NOT
+    # include line_items. Pydantic serialization will hit a lazy-load which
+    # raises MissingGreenlet in async context.
+    refreshed = await db.execute(
+        select(AdjudicationResult)
+        .where(AdjudicationResult.id == adj.id)
+        .options(selectinload(AdjudicationResult.line_items))
+    )
+    return refreshed.scalar_one()
 
 
 async def get_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> AdjudicationResult | None:
@@ -301,4 +310,11 @@ async def finalize_adjudication(
         claim.deducted_amount = adj.total_deducted_inr
 
     await db.flush()
-    return adj
+
+    # Re-fetch to ensure line_items are still eagerly loaded after flush
+    refreshed = await db.execute(
+        select(AdjudicationResult)
+        .where(AdjudicationResult.id == adj.id)
+        .options(selectinload(AdjudicationResult.line_items))
+    )
+    return refreshed.scalar_one()

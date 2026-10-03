@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.adjudication import AdjudicationResult, LineItemDecision, OverrideReason
 from app.models.claim import Claim, ClaimStatus
@@ -221,7 +222,11 @@ async def get_queue(
     elif adjuster_id:
         query = query.where(Claim.assigned_adjuster_id == adjuster_id)
 
-    query = query.order_by(Claim.sla_deadline.asc().nulls_last())
+    query = (
+        query
+        .options(selectinload(Claim.adjudication_result))
+        .order_by(Claim.sla_deadline.asc().nulls_last())
+    )
 
     result = await db.execute(query)
     return result.scalars().all()
