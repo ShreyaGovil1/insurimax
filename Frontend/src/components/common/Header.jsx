@@ -88,9 +88,8 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
           <div className="flex flex-col">
             <div className="flex items-center space-x-1.5">
               <span className="text-base font-extrabold tracking-tight text-slate-900">InsuriMax</span>
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#A3FF12] animate-pulse" />
-                AI 3h SLA
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                Cashless Portal
               </span>
             </div>
           </div>

@@ -162,4 +162,117 @@ describe("API Client & Services", () => {
     expect(res.approved_amount_inr).toBe(246900.0)
     expect(res.status_message).toContain("under review")
   })
+
+  it("handles auth token refresh", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: "new-access-token",
+        refresh_token: "new-refresh-token",
+        token_type: "bearer",
+        expires_in: 3600,
+      }),
+    })
+
+    const res = await api.auth.refreshToken("old-refresh-token")
+    expect(res.access_token).toBe("new-access-token")
+    expect(getAccessToken()).toBe("new-access-token")
+  })
+
+  it("calls users API for profile fetch and role updates", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "u-1", role: "adjuster" }),
+    })
+
+    const user = await api.users.getById("u-1")
+    expect(user.id).toBe("u-1")
+
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "u-1", role: "senior_adjuster" }),
+    })
+
+    const updated = await api.users.updateRole("u-1", "senior_adjuster")
+    expect(updated.role).toBe("senior_adjuster")
+  })
+
+  it("allows admin to void a claim", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: "Claim c-1 voided" }),
+    })
+
+    const res = await api.claims.void("c-1")
+    expect(res.message).toContain("voided")
+  })
+
+  it("handles policy versioning and rule extraction lifecycle", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "v-1", version_number: "2026.1" }),
+    })
+
+    const formData = new FormData()
+    formData.append("version_number", "2026.1")
+    const version = await api.policies.createVersion("pol-1", formData)
+    expect(version.version_number).toBe("2026.1")
+
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => [{ id: "r-1", clause_reference: "Section 4.1" }],
+    })
+
+    const rules = await api.policies.getRules("pol-1", "v-1")
+    expect(rules[0].clause_reference).toBe("Section 4.1")
+
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: "1 rules updated" }),
+    })
+
+    const patchRes = await api.policies.patchRules("pol-1", "v-1", [{ rule_id: "r-1", clause_reference: "Section 4.1.1" }])
+    expect(patchRes.message).toContain("rules updated")
+  })
+
+  it("supports webhooks and organisation settings updates", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: "Settings updated", org_id: "org-1" }),
+    })
+
+    const settingRes = await api.compliance.updateOrgSettings("org-1", { name: "Star TPA Updated" })
+    expect(settingRes.message).toBe("Settings updated")
+
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "wh-1", event_type: "claim.finalized" }),
+    })
+
+    const webhook = await api.webhooks.subscribe({
+      event_type: "claim.finalized",
+      target_url: "https://webhook.site/test",
+    })
+    expect(webhook.event_type).toBe("claim.finalized")
+  })
+
+  it("checks system health and readiness probes", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "healthy", checks: { database: "ok" } }),
+    })
+
+    const health = await api.system.getHealth()
+    expect(health.status).toBe("healthy")
+  })
 })

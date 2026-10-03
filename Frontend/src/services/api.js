@@ -135,6 +135,17 @@ export const api = {
       })
     },
 
+    async refreshToken(refreshToken) {
+      const data = await apiRequest("/auth/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      })
+      if (data?.access_token) {
+        setTokens(data.access_token, data.refresh_token)
+      }
+      return data
+    },
+
     async getMe() {
       return await apiRequest("/auth/me")
     },
@@ -147,6 +158,20 @@ export const api = {
       } finally {
         clearTokens()
       }
+    },
+  },
+
+  // Users (Admin / Identity)
+  users: {
+    async getById(userId) {
+      return await apiRequest(`/users/${userId}`)
+    },
+
+    async updateRole(userId, role) {
+      return await apiRequest(`/users/${userId}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      })
     },
   },
 
@@ -178,8 +203,8 @@ export const api = {
       return await apiRequest(`/adjusters/${adjusterId}/daily-digest${query}`)
     },
 
-    async getAdjusterOverrides(adjusterId) {
-      return await apiRequest(`/adjusters/${adjusterId}/overrides`)
+    async getAdjusterOverrides(adjusterId, limit = 50) {
+      return await apiRequest(`/adjusters/${adjusterId}/overrides?limit=${limit}`)
     },
   },
 
@@ -212,6 +237,12 @@ export const api = {
       return await apiRequest(`/claims/${claimId}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status, note }),
+      })
+    },
+
+    async void(claimId) {
+      return await apiRequest(`/claims/${claimId}`, {
+        method: "DELETE",
       })
     },
 
@@ -371,11 +402,22 @@ export const api = {
       return await apiRequest(`/patient/claims/${claimId}/status`)
     },
 
-    async subscribeNotifications(claimId, { email, phone }) {
+    async subscribeNotifications(claimId, { email, phone } = {}) {
       const params = new URLSearchParams()
       if (email) params.append("email", email)
       if (phone) params.append("phone", phone)
-      return await apiRequest(`/patient/claims/${claimId}/notifications/subscribe?${params.toString()}`, {
+      const qs = params.toString() ? `?${params.toString()}` : ""
+      return await apiRequest(`/patient/claims/${claimId}/notifications/subscribe${qs}`, {
+        method: "POST",
+      })
+    },
+
+    async getBimaBharosaPayload(claimId, issueType = "discharge_delay") {
+      return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-payload?issue_type=${encodeURIComponent(issueType)}`)
+    },
+
+    async triggerBimaBharosaAutofill(claimId, { issueType = "discharge_delay", headless = false } = {}) {
+      return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-autofill?issue_type=${encodeURIComponent(issueType)}&headless=${headless}`, {
         method: "POST",
       })
     },
@@ -402,6 +444,38 @@ export const api = {
         method: "POST",
         body: JSON.stringify(policyData),
       })
+    },
+
+    async createVersion(policyId, formData) {
+      return await apiRequest(`/policies/${policyId}/versions`, {
+        method: "POST",
+        body: formData,
+      })
+    },
+
+    async getVersion(policyId, versionId) {
+      return await apiRequest(`/policies/${policyId}/versions/${versionId}`)
+    },
+
+    async extractRules(policyId, versionId) {
+      return await apiRequest(`/policies/${policyId}/versions/${versionId}/extract-rules`, {
+        method: "POST",
+      })
+    },
+
+    async getRules(policyId, versionId) {
+      return await apiRequest(`/policies/${policyId}/versions/${versionId}/rules`)
+    },
+
+    async patchRules(policyId, versionId, rulesList) {
+      return await apiRequest(`/policies/${policyId}/versions/${versionId}/rules`, {
+        method: "PATCH",
+        body: JSON.stringify(rulesList),
+      })
+    },
+
+    async getClause(policyId, versionId, ruleId) {
+      return await apiRequest(`/policies/${policyId}/versions/${versionId}/clauses/${ruleId}`)
     },
 
     async listNonPayableItems(orgId = null) {
@@ -477,6 +551,48 @@ export const api = {
 
     async getOrgSettings(orgId) {
       return await apiRequest(`/org/${orgId}/settings`)
+    },
+
+    async updateOrgSettings(orgId, settingsData) {
+      return await apiRequest(`/org/${orgId}/settings`, {
+        method: "PATCH",
+        body: JSON.stringify(settingsData),
+      })
+    },
+  },
+
+  // Webhooks
+  webhooks: {
+    async subscribe(subscriptionData) {
+      return await apiRequest("/webhooks/subscribe", {
+        method: "POST",
+        body: JSON.stringify(subscriptionData),
+      })
+    },
+
+    async list() {
+      return await apiRequest("/webhooks")
+    },
+  },
+
+  // System Health & Probes
+  system: {
+    async getRoot() {
+      const serverRoot = BASE_URL.replace(/\/api\/v1\/?$/, "")
+      const res = await fetch(`${serverRoot}/`)
+      return await res.json()
+    },
+
+    async getHealth() {
+      const serverRoot = BASE_URL.replace(/\/api\/v1\/?$/, "")
+      const res = await fetch(`${serverRoot}/health`)
+      return await res.json()
+    },
+
+    async getReady() {
+      const serverRoot = BASE_URL.replace(/\/api\/v1\/?$/, "")
+      const res = await fetch(`${serverRoot}/ready`)
+      return await res.json()
     },
   },
 }

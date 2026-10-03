@@ -8,6 +8,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
+import app.models  # noqa: F401 - ensure all ORM relationships are registered
 from app.core.deps import DBSession
 from app.services import claim_service
 
@@ -86,3 +87,86 @@ async def subscribe_to_notifications(
             "sms": phone is not None,
         },
     }
+
+
+@router.get("/claims/{claim_id}/bima-bharosa-payload")
+async def get_bima_bharosa_payload_endpoint(
+    claim_id: uuid.UUID,
+    db: DBSession,
+    issue_type: str = "discharge_delay",
+):
+    """
+    Generate an IRDAI Bima Bharosa complaint autofill payload.
+    Maps claim data into the exact 5-section schema required by Bima Bharosa.
+    """
+    from app.services.bima_bharosa_service import generate_bima_bharosa_payload
+
+    claim = await claim_service.get_claim(db, claim_id)
+    if not claim:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+
+    claim_dict = {
+        "claim_number": claim.claim_number,
+        "policy_number": claim.policy_number,
+        "patient_name": claim.patient_name,
+        "patient_phone": claim.patient_phone,
+        "hospital_name": claim.hospital_name,
+        "insurer_name": claim.insurer_name,
+        "billed_amount": claim.billed_amount,
+        "approved_amount": claim.approved_amount,
+        "deducted_amount": claim.deducted_amount,
+        "status": claim.status.value,
+    }
+
+    payload = generate_bima_bharosa_payload(claim_dict, issue_type=issue_type)
+    return payload.model_dump()
+
+
+@router.post("/claims/{claim_id}/bima-bharosa-autofill")
+async def trigger_bima_bharosa_autofill_agent(
+    claim_id: uuid.UUID,
+    db: DBSession,
+    issue_type: str = "discharge_delay",
+    headless: bool = False,
+):
+    """
+    Launch the autonomous browser agent to navigate to Bima Bharosa
+    and fill out the grievance form for the specified claim.
+    """
+    from app.services.bima_bharosa_service import run_bima_bharosa_agent
+
+    import traceback, logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        claim = await claim_service.get_claim(db, claim_id)
+        if not claim:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+
+        claim_dict = {
+            "claim_number": claim.claim_number,
+            "policy_number": claim.policy_number,
+            "patient_name": claim.patient_name,
+            "patient_phone": claim.patient_phone,
+            "hospital_name": claim.hospital_name,
+            "insurer_name": claim.insurer_name,
+            "billed_amount": claim.billed_amount,
+            "approved_amount": claim.approved_amount,
+            "deducted_amount": claim.deducted_amount,
+            "status": claim.status.value,
+        }
+
+        result = await run_bima_bharosa_agent(claim_dict, issue_type=issue_type, headless=headless)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error in trigger_bima_bharosa_autofill_agent: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Browser automation agent error: {str(exc)}",
+        )
+
+
+
+
