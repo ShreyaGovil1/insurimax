@@ -73,7 +73,7 @@ async def seed():
         # ── 2. Seed Users with All 4 Roles ───────────────────────────────────
         users_data = [
             ("adjuster@insurimax.com", "Priya Sharma", UserRole.ADJUSTER, org_tpa.id),
-            ("senior@insurimax.com", "Rajesh Patel (Lead Adjuster)", UserRole.SENIOR_ADJUSTER, org_tpa.id),
+            ("senior.adjuster@insurimax.com", "Rajesh Patel (Lead Adjuster)", UserRole.SENIOR_ADJUSTER, org_tpa.id),
             ("admin@insurimax.com", "Vikram Seth (Operations Admin)", UserRole.ADMIN, org_tpa.id),
             ("hospital@insurimax.com", "Sunita Rao (Apollo Billing)", UserRole.HOSPITAL_DESK, org_apollo.id),
         ]

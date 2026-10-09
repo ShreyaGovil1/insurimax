@@ -4,7 +4,7 @@ User and auth service.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
@@ -120,3 +120,75 @@ async def update_user_role(
     user.role = role
     await db.flush()
     return user
+
+
+async def list_users(
+    db: AsyncSession,
+    search: str | None = None,
+    role: UserRole | None = None,
+    is_active: bool | None = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[User], int]:
+    conditions = []
+    if search:
+        like = f"%{search.strip()}%"
+        conditions.append(or_(User.email.ilike(like), User.full_name.ilike(like)))
+    if role is not None:
+        conditions.append(User.role == role)
+    if is_active is not None:
+        conditions.append(User.is_active == is_active)
+
+    total = (
+        await db.execute(select(func.count()).select_from(User).where(*conditions))
+    ).scalar_one()
+    result = await db.execute(
+        select(User).where(*conditions).order_by(User.created_at.desc()).offset(skip).limit(limit)
+    )
+    return list(result.scalars().all()), total
+
+
+async def admin_update_user(db: AsyncSession, user: User, changes: dict) -> User:
+    for key, value in changes.items():
+        setattr(user, key, value)
+    await db.flush()
+    return user
+
+
+async def reset_user_password(db: AsyncSession, user: User, new_password: str) -> None:
+    user.hashed_password = hash_password(new_password)
+    await db.flush()
+
+
+async def count_active_admins(db: AsyncSession) -> int:
+    return (
+        await db.execute(
+            select(func.count()).select_from(User).where(
+                User.role == UserRole.ADMIN, User.is_active.is_(True)
+            )
+        )
+    ).scalar_one()
+
+
+async def get_admin_stats(db: AsyncSession) -> dict:
+    role_rows = (await db.execute(select(User.role, func.count()).group_by(User.role))).all()
+    active = (
+        await db.execute(select(func.count()).select_from(User).where(User.is_active.is_(True)))
+    ).scalar_one()
+    total = sum(c for _, c in role_rows)
+    orgs = (await db.execute(select(func.count()).select_from(Organization))).scalar_one()
+    by_role = {r.value: 0 for r in UserRole}
+    for r, c in role_rows:
+        by_role[r.value] = c
+    return {
+        "total_users": total,
+        "active_users": active,
+        "inactive_users": total - active,
+        "users_by_role": by_role,
+        "total_organizations": orgs,
+    }
+
+
+async def list_organizations(db: AsyncSession) -> list[Organization]:
+    result = await db.execute(select(Organization).order_by(Organization.name))
+    return list(result.scalars().all())

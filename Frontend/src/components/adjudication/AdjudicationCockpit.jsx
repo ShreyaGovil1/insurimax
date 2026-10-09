@@ -57,7 +57,19 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
     }
   }
 
-  const [activeTab, setActiveTab] = useState("adjudication") // "adjudication" | "documents" | "queries"
+  // Tabs live in the URL (/claims/:claimId[/documents|/queries]); local state is only a
+  // fallback when the cockpit is rendered outside the router (e.g. standalone tests).
+  const TABS = ["adjudication", "documents", "queries"]
+  const [localTab, setLocalTab] = useState("adjudication")
+  const routed = Boolean(params.claimId)
+  const activeTab = routed ? (TABS.includes(params.tab) ? params.tab : "adjudication") : localTab
+  const setActiveTab = (tab) => {
+    if (!routed) {
+      setLocalTab(tab)
+    } else if (navigate) {
+      navigate(tab === "adjudication" ? `/claims/${params.claimId}` : `/claims/${params.claimId}/${tab}`)
+    }
+  }
   const [claim, setClaim] = useState(null)
   const [adjudication, setAdjudication] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)

@@ -5,6 +5,7 @@ import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
 import { useToast } from "../ui/toast"
+import { DEMO_CREDENTIALS } from "../../services/api"
 
 const STATS = [
   { icon: Clock, value: "<30 min", label: "Avg. adjudication time" },
@@ -15,7 +16,7 @@ const STATS = [
 
 export function LoginPage({ onLogin }) {
   const { toast } = useToast()
-  const { login, switchRole } = useAuth()
+  const { login } = useAuth()
   let navigate = () => {}
   let location = { state: null }
   try {
@@ -23,12 +24,10 @@ export function LoginPage({ onLogin }) {
     location = useLocation()
   } catch {}
 
-  const from = location.state?.from?.pathname || "/queue"
+  const from = location.state?.from?.pathname || "/"
 
-  const [isRegister, setIsRegister] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [fullName, setFullName] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
@@ -37,23 +36,10 @@ export function LoginPage({ onLogin }) {
     setLoading(true)
 
     try {
-      if (isRegister) {
-        if (!fullName.trim()) {
-          toast({ title: "Validation Error", description: "Full name is required", variant: "destructive" })
-          setLoading(false)
-          return
-        }
-        if (onLogin) {
-          await onLogin(email, password, fullName)
-        } else {
-          await login(email, password)
-        }
+      if (onLogin) {
+        await onLogin(email, password)
       } else {
-        if (onLogin) {
-          await onLogin(email, password)
-        } else {
-          await login(email, password)
-        }
+        await login(email, password)
       }
       if (navigate) navigate(from, { replace: true })
     } catch (err) {
@@ -67,24 +53,12 @@ export function LoginPage({ onLogin }) {
     }
   }
 
-  const handleDemoLogin = async (role) => {
-    setLoading(true)
-    try {
-      if (onLogin) {
-        await onLogin(null, null, null, role)
-      } else {
-        await switchRole(role)
-      }
-      if (navigate) navigate(from, { replace: true })
-    } catch (err) {
-      toast({
-        title: "Login Failed",
-        description: err.message || "Could not log into account",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
+  // Demo personas only pre-fill the form; the user still has to sign in.
+  const handleDemoFill = (role) => {
+    const cred = DEMO_CREDENTIALS[role]
+    if (!cred) return
+    setEmail(cred.email)
+    setPassword(cred.password)
   }
 
   return (
@@ -162,32 +136,14 @@ export function LoginPage({ onLogin }) {
         <div className="w-full max-w-md mx-auto space-y-8">
           <div>
             <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              {isRegister ? "Create your account" : "Welcome back"}
+              Welcome back
             </h2>
             <p className="mt-1.5 text-sm text-slate-500">
-              {isRegister
-                ? "Join your TPA organisation to start adjudicating claims"
-                : "Sign in to your InsuriMax workspace"}
+              Sign in to your InsuriMax workspace
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {isRegister && (
-              <div className="space-y-1.5">
-                <label htmlFor="fullName" className="block text-xs font-semibold text-slate-700">
-                  Full Name
-                </label>
-                <Input
-                  id="fullName"
-                  type="text"
-                  placeholder="e.g. Priya Sharma"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required={isRegister}
-                  className="h-11"
-                />
-              </div>
-            )}
 
             <div className="space-y-1.5">
               <label htmlFor="email" className="block text-xs font-semibold text-slate-700">
@@ -240,7 +196,7 @@ export function LoginPage({ onLogin }) {
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
-                  {isRegister ? "Create Account" : "Sign In"}
+                  Sign In
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -254,7 +210,7 @@ export function LoginPage({ onLogin }) {
             </div>
             <div className="relative flex justify-center">
               <span className="bg-slate-50 px-3 text-xs text-slate-400 font-medium">
-                or start with a demo persona
+                or fill in a demo persona
               </span>
             </div>
           </div>
@@ -269,7 +225,8 @@ export function LoginPage({ onLogin }) {
             ].map((role) => (
               <button
                 key={role.key}
-                onClick={() => handleDemoLogin(role.key)}
+                type="button"
+                onClick={() => handleDemoFill(role.key)}
                 className="group flex flex-col items-start p-3 rounded-lg border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/50 transition-all text-left cursor-pointer"
               >
                 <span className="text-xs font-semibold text-slate-800 group-hover:text-blue-700 transition-colors">
@@ -279,17 +236,6 @@ export function LoginPage({ onLogin }) {
               </button>
             ))}
           </div>
-
-          {/* Toggle */}
-          <p className="text-center text-xs text-slate-500">
-            {isRegister ? "Already have an account?" : "New to InsuriMax?"}{" "}
-            <button
-              onClick={() => setIsRegister(!isRegister)}
-              className="text-blue-600 font-semibold hover:text-blue-700 transition-colors cursor-pointer"
-            >
-              {isRegister ? "Sign in" : "Create account"}
-            </button>
-          </p>
         </div>
       </div>
     </div>

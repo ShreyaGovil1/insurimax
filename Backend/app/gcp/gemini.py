@@ -218,6 +218,142 @@ Output schema:
 }
 """
 
+_EXTRACTION_PREAMBLE = """
+You are InsuriMax's document extraction engine.
+{doc_label}
+Return ONLY valid JSON — no markdown, no explanation, no prose.
+Use null for anything not present in the document; never guess or copy values from other kinds of documents.
+{notes}
+Output schema:
+"""
+
+_COMMON_TAIL = '''  "extraction_notes": ["string"],
+  "confidence_score": number
+}
+'''
+
+_PATIENT = '''  "patient": {
+    "name": "string | null",
+    "age": number | null,
+    "gender": "string | null",
+    "uhid": "string | null"
+  },'''
+
+EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
+    "discharge_summary": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is a hospital DISCHARGE SUMMARY.", notes=""
+    ) + """{
+  "patient": {
+    "name": "string | null", "age": number | null, "gender": "string | null", "uhid": "string | null",
+    "admission_date": "ISO8601 | null", "discharge_date": "ISO8601 | null",
+    "diagnosis": ["string"], "procedures": ["string"]
+  },
+  "hospital": { "name": "string | null" },
+  "treating_doctor": "string | null",
+  "length_of_stay_days": number | null,
+  "condition_at_discharge": "string | null",
+  "medications_on_discharge": [{ "name": "string", "dosage": "string | null", "duration": "string | null" }],
+  "follow_up_instructions": "string | null",
+""" + _COMMON_TAIL,
+    "prescription": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is a doctor's PRESCRIPTION.", notes=""
+    ) + """{
+""" + _PATIENT + """
+  "doctor": { "name": "string | null", "registration_number": "string | null", "specialization": "string | null" },
+  "hospital": { "name": "string | null" },
+  "prescription_date": "ISO8601 | null",
+  "diagnosis": ["string"],
+  "medications": [{ "name": "string", "dosage": "string | null", "frequency": "string | null", "duration": "string | null", "route": "string | null" }],
+  "tests_advised": ["string"],
+  "advice": "string | null",
+""" + _COMMON_TAIL,
+    "lab_report": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is a DIAGNOSTIC / LAB REPORT.", notes=""
+    ) + """{
+""" + _PATIENT + """
+  "lab": { "name": "string | null" },
+  "referring_doctor": "string | null",
+  "report_date": "ISO8601 | null",
+  "tests": [{ "test_name": "string", "result": "string | null", "unit": "string | null", "reference_range": "string | null", "flag": "normal | high | low | abnormal | null" }],
+  "summary": "string | null",
+""" + _COMMON_TAIL,
+    "consultation_notes": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is a doctor's CONSULTATION NOTE.", notes=""
+    ) + """{
+""" + _PATIENT + """
+  "doctor": { "name": "string | null", "registration_number": "string | null", "specialization": "string | null" },
+  "hospital": { "name": "string | null" },
+  "consultation_date": "ISO8601 | null",
+  "chief_complaints": ["string"],
+  "findings": "string | null",
+  "diagnosis": ["string"],
+  "treatment_plan": "string | null",
+  "follow_up": "string | null",
+""" + _COMMON_TAIL,
+    "policy_document": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is an INSURANCE POLICY document / schedule.",
+        notes=(
+            "IMPORTANT: the organisation named on this document is the INSURER / TPA that issued the policy. "
+            "It is NOT a hospital. Never output a 'hospital' field. "
+            "Fill 'coverage_items' with EVERY benefit, coverage and add-on listed in the schedule/certificate "
+            "(one row each, covered=true) and every explicitly excluded/not-covered item (covered=false)."
+        ),
+    ) + """{
+  "policy": {
+    "insurer_name": "string | null",
+    "tpa_name": "string | null",
+    "policy_number": "string | null",
+    "product_name": "string | null",
+    "policyholder_name": "string | null",
+    "policy_start_date": "ISO8601 | null",
+    "policy_end_date": "ISO8601 | null",
+    "sum_insured_inr": number | null,
+    "co_pay_percent": number | null,
+    "room_rent_cap_inr_per_day": number | null,
+    "icu_cap_inr_per_day": number | null
+  },
+  "coverage_items": [
+    {
+      "category": "string (e.g. In-patient, Day care, Pre/Post hospitalization, Maternity, Ambulance, Add-on cover)",
+      "benefit": "string (the covered item / benefit / treatment as named in the policy)",
+      "covered": true | false | null,
+      "limit_inr": number | null,
+      "limit_description": "string | null (e.g. '1% of sum insured per day', 'up to 60 days before admission')",
+      "conditions": "string | null (waiting period, sub-conditions, co-pay)"
+    }
+  ],
+  "insured_members": [{ "name": "string", "relation": "string | null", "date_of_birth": "ISO8601 | null" }],
+  "waiting_periods": [{ "type": "string", "months": number | null }],
+  "sub_limits": [{ "category": "string", "limit_inr": number | null }],
+  "exclusions": ["string"],
+""" + _COMMON_TAIL,
+    "other": _EXTRACTION_PREAMBLE.format(
+        doc_label="The document is a SUPPORTING document of unknown type.", notes=""
+    ) + """{
+  "document_title": "string | null",
+  "summary": "string",
+  "key_fields": { "<label>": "string" },
+  "people": ["string"],
+  "organizations": ["string"],
+  "dates": [{ "label": "string", "date": "ISO8601" }],
+  "amounts": [{ "label": "string", "amount_inr": number }],
+""" + _COMMON_TAIL,
+}
+
+
+CLASSIFY_PROMPT = """
+Classify the attached document. Return ONLY JSON:
+{"document_type": "itemized_bill | discharge_summary | prescription | lab_report | consultation_notes | policy_document | other", "confidence": number}
+Use policy_document for insurance policy schedules, certificates, policy wording and benefit tables.
+Use itemized_bill ONLY for hospital bills listing charges per item.
+"""
+
+
+def get_extraction_prompt(doc_type: str) -> str:
+    """System prompt for a document type (itemized bills use the original line-item schema)."""
+    return EXTRACTION_PROMPTS_BY_DOC_TYPE.get(doc_type, EXTRACTION_SYSTEM_PROMPT)
+
+
 ADJUDICATION_SYSTEM_PROMPT = """
 You are InsuriMax's adjudication engine — an expert insurance claims auditor trained on IRDAI regulations.
 You will receive:

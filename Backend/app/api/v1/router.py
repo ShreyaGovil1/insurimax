@@ -4,6 +4,7 @@ Central v1 API router — assembles all route modules.
 from fastapi import APIRouter
 
 from app.api.v1.routes import (
+    admin,
     adjudication,
     analytics,
     auth,
@@ -20,6 +21,9 @@ api_router = APIRouter(prefix="/api/v1")
 # Auth & Users
 api_router.include_router(auth.router)
 api_router.include_router(auth.users_router)
+
+# Admin panel
+api_router.include_router(admin.router)
 
 # Core claim workflow
 api_router.include_router(claims.router)
