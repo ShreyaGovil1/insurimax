@@ -6,6 +6,8 @@ services:
       - "8080:8080"
     environment:
       PORT: 8080
+      # This URL is used by the browser, so it must be reachable from the
+      # host machine — localhost:8000 is correct when the API port is exposed.
       VITE_API_URL: http://localhost:8000/api/v1
     depends_on:
       - api
@@ -18,22 +20,21 @@ services:
     env_file:
       - ./Backend/.env
     environment:
-      # Presence of this variable switches the app to the emulator
       STORAGE_EMULATOR_HOST: http://gcs:4443
       GCS_BUCKET_NAME: demo-bucket
-      CORS_ORIGINS: "*"
+      # Allow requests from the frontend container and local dev
+      CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173","http://127.0.0.1:8080"]'
     volumes:
-      - ./Backend:/app    # live code reload in dev
-      - /app/.venv        # keep the image's venv; don't let the host folder shadow it
+      - ./Backend:/app        # live code reload in dev
+      - /app/.venv            # keep the image's venv intact
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       - gcs
 
   gcs:
     image: fsouza/fake-gcs-server
-    # external-url must be reachable from the api container (needed for resumable uploads)
     command: ["-scheme", "http", "-port", "4443", "-external-url", "http://gcs:4443"]
     ports:
       - "4443:4443"
     volumes:
-      - ./gcs-data:/data  # persists emulated buckets/objects between restarts
+      - ./gcs-data:/data

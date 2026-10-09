@@ -124,8 +124,6 @@ class Settings(BaseSettings):
     # Sampling ratio 0.0-1.0 (1.0 = trace every request, 0.1 = 10%)
     OTEL_SAMPLE_RATE: float = 1.0
 
-    STORAGE_EMULATOR_HOST = 
-
 
 @lru_cache
 def get_settings() -> Settings:

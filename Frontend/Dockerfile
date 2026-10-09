@@ -28,7 +28,10 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 
 # Copy startup hook to dynamically generate env-config.js from container environment variables
 COPY docker-entrypoint.d/40-generate-env-config.sh /docker-entrypoint.d/40-generate-env-config.sh
-RUN chmod +x /docker-entrypoint.d/40-generate-env-config.sh
+# Strip Windows CRLF line endings (\r\n → \n) — avoids "not found" on the shebang line
+# when the file was edited on Windows before being built in a Linux container.
+RUN sed -i 's/\r//' /docker-entrypoint.d/40-generate-env-config.sh \
+    && chmod +x /docker-entrypoint.d/40-generate-env-config.sh
 
 # Google Cloud Run injects $PORT (default: 8080)
 ENV PORT=8080
