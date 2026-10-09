@@ -1,4 +1,15 @@
 services:
+  frontend:
+    build:
+      context: ./Frontend
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      VITE_API_URL: http://localhost:8000/api/v1
+    depends_on:
+      - api
+
   api:
     build:
       context: ./Backend
@@ -9,7 +20,8 @@ services:
     environment:
       # Presence of this variable switches the app to the emulator
       STORAGE_EMULATOR_HOST: http://gcs:4443
-      GCS_BUCKET: demo-bucket
+      GCS_BUCKET_NAME: demo-bucket
+      CORS_ORIGINS: "*"
     volumes:
       - ./Backend:/app    # live code reload in dev
       - /app/.venv        # keep the image's venv; don't let the host folder shadow it

@@ -1,13 +1,17 @@
 """
 Structured output schema for the adjudication agent.
+Senior Medical Claims Auditor & TPA Specialist (IRDAI compliant).
 
-This is passed to the ADK ``Agent`` as ``output_schema`` so Gemini's final
-answer is validated/coerced into this shape instead of freeform JSON text.
+Follows the strict 5-step adjudication output JSON structure:
+  adjudication_summary → financial_breakdown → flagged_infractions_or_reasons
+  → required_actions → line_item_decisions
 """
 from typing import Literal
-
 from pydantic import BaseModel, Field
 
+# ── Literal types ──────────────────────────────────────────────────────────────
+AuditDecisionStatusLiteral = Literal["APPROVED", "DENIED", "QUERY_RAISED"]
+ActionTakenLiteral = Literal["DEDUCTED", "REJECTED", "FLAGGED_FOR_QUERY"]
 LineItemStatusLiteral = Literal[
     "approved",
     "partially_approved",
@@ -17,84 +21,141 @@ LineItemStatusLiteral = Literal[
 ]
 
 
-class CapAnalysis(BaseModel):
-    """Requested-vs-approved breakdown for a line item that hit a policy cap."""
+# ── STEP 1-4: Adjudication Summary ────────────────────────────────────────────
+class AdjudicationSummary(BaseModel):
+    """Top-level claim decision produced by the 5-step adjudication flow."""
+    status: AuditDecisionStatusLiteral = Field(
+        description="Overall claim decision: APPROVED, DENIED, or QUERY_RAISED."
+    )
+    policy_number: str = Field(
+        default="UNKNOWN",
+        description="Policy reference number extracted from the documents.",
+    )
+    patient_name: str = Field(
+        default="UNKNOWN",
+        description="Name of the insured claimant / patient.",
+    )
+    primary_diagnosis: str = Field(
+        default="UNKNOWN",
+        description="Primary clinical diagnosis for the admission.",
+    )
+    internal_audit_timestamp: str = Field(
+        default="",
+        description="ISO 8601 timestamp when the audit decision was rendered.",
+    )
 
-    cap_applies: bool = Field(
-        description="Whether a policy cap/sub-limit was breached for this item."
+
+# ── STEP 5: Financial Breakdown ───────────────────────────────────────────────
+class FinancialBreakdown(BaseModel):
+    """Detailed financial payout calculation from Step 5 of the adjudication."""
+    total_billed_amount: float = Field(
+        default=0.0,
+        description="Total amount billed by the hospital in INR.",
     )
-    cap_type: str | None = Field(
-        default=None,
-        description="Which cap applied, e.g. 'room_rent_cap', 'icu_cap', 'sub_limit'.",
+    total_approved_amount: float = Field(
+        default=0.0,
+        description="Total approved / admissible payout amount in INR.",
     )
-    cap_limit_inr: float | None = Field(
-        default=None, description="The capped/allowed amount from the policy."
+    total_deductions: float = Field(
+        default=0.0,
+        description="Total deductions applied across all categories in INR.",
     )
-    requested_amount_inr: float = Field(
-        description="The amount actually billed/requested for this item."
+    room_rent_deduction: float = Field(
+        default=0.0,
+        description="Direct room rent cap excess deduction in INR.",
     )
-    approved_amount_inr: float = Field(
-        description="The amount approved for this item after applying the cap."
+    consumables_deduction: float = Field(
+        default=0.0,
+        description="IRDAI non-payable consumables deduction in INR.",
     )
-    proportionate_deduction_ratio: float | None = Field(
-        default=None,
+    proportional_charge_deduction: float = Field(
+        default=0.0,
+        description="Proportional deduction on associated charges due to room rent breach in INR.",
+    )
+    co_pay_applied_amount: float = Field(
+        default=0.0,
+        description="Mandatory co-pay amount deducted from the net payable in INR.",
+    )
+
+
+# ── Flagged Infractions / Reasons ─────────────────────────────────────────────
+class FlaggedInfraction(BaseModel):
+    """An individual item or section flagged during the adjudication audit."""
+    item_name: str = Field(
+        description="String name of the line item or section reference being flagged."
+    )
+    action_taken: ActionTakenLiteral = Field(
+        description="Action taken: DEDUCTED, REJECTED, or FLAGGED_FOR_QUERY."
+    )
+    amount_impacted: float = Field(
+        default=0.0,
+        description="Financial amount impacted by this infraction in INR.",
+    )
+    reason_and_policy_citation: str = Field(
         description=(
-            "approved/requested ratio from the room-rent or ICU cap breach, "
-            "applied to associated charges per IRDAI proportionate-deduction rules."
+            "Thorough explanation detailing why this item was adjusted, "
+            "referencing specific document pages or policy clauses."
         ),
     )
 
 
+# ── Required Actions (Query / Denial) ────────────────────────────────────────
+class RequiredActions(BaseModel):
+    """Actions required from hospital or denial rationale."""
+    hospital_queries: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Clear, numbered questions specifying exactly what documents "
+            "or data points the hospital billing desk needs to resubmit "
+            "to clear the check. Only populate if status is QUERY_RAISED."
+        ),
+    )
+    denial_rationale: str | None = Field(
+        default=None,
+        description=(
+            "Clear, legally robust explanation of why the claim was rejected "
+            "under the policy terms. Only populate if status is DENIED."
+        ),
+    )
+
+
+# ── Cap Analysis (sub-model for line items) ───────────────────────────────────
+class CapAnalysis(BaseModel):
+    """Details of any cap / sub-limit applied to a line item."""
+    cap_applies: bool = Field(default=False)
+    cap_type: str | None = None
+    cap_limit_inr: float | None = None
+    requested_amount_inr: float = 0.0
+    approved_amount_inr: float = 0.0
+    proportionate_deduction_ratio: float | None = None
+
+
+# ── Per-line-item Decision ────────────────────────────────────────────────────
 class LineItemAdjudication(BaseModel):
+    """Individual line-item adjudication decision."""
     line_number: int
     item_name: str
     item_category: str | None = None
-
     billed_amount_inr: float
     approved_amount_inr: float
     deducted_amount_inr: float
-
     status: LineItemStatusLiteral
-    confidence: float = Field(
-        ge=0,
-        le=1,
-        description="Model's confidence in this specific line-item decision (0-1).",
-    )
-    explanation: str = Field(
-        description="Cite the exact policy clause or IRDAI rule that was applied."
-    )
-    policy_rule_reference: str | None = Field(
-        default=None, description="Clause reference or rule title this decision cites."
-    )
-    cap_analysis: CapAnalysis | None = Field(
-        default=None,
-        description="Populated only when a policy cap/sub-limit applied to this item.",
-    )
+    confidence: float = Field(ge=0, le=1, default=0.95)
+    explanation: str
+    policy_rule_reference: str | None = None
+    cap_analysis: CapAnalysis | None = None
 
 
-class DeductionBreakdown(BaseModel):
-    room_rent_excess_inr: float = 0
-    icu_excess_inr: float = 0
-    non_payables_inr: float = 0
-    copay_inr: float = 0
-    exclusions_inr: float = 0
-    sub_limit_deductions_inr: float = 0
-    other_deductions_inr: float = 0
-
-
-class AdjudicationSummary(BaseModel):
-    total_billed_inr: float
-    total_approved_inr: float
-    total_deducted_inr: float
-    confidence_score: float = Field(
-        ge=0, le=1, description="Overall confidence across the whole claim."
-    )
-    auto_approvable: bool
-    deduction_breakdown: DeductionBreakdown
-
-
+# ── Top-level Agent Output ────────────────────────────────────────────────────
 class AdjudicationAgentOutput(BaseModel):
+    """
+    Complete output of the adjudication agent.
+    This is the single JSON object the agent must produce.
+    """
     adjudication_summary: AdjudicationSummary
-    line_item_decisions: list[LineItemAdjudication]
-    flags: list[str] = []
-    adjudication_notes: list[str] = []
+    financial_breakdown: FinancialBreakdown = Field(default_factory=FinancialBreakdown)
+    flagged_infractions_or_reasons: list[FlaggedInfraction] = Field(default_factory=list)
+    required_actions: RequiredActions = Field(default_factory=RequiredActions)
+    line_item_decisions: list[LineItemAdjudication] = Field(default_factory=list)
+    # Internal flags (not part of user-facing schema but useful for service-layer logic)
+    flags: list[str] = Field(default_factory=list)

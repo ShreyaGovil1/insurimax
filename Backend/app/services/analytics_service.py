@@ -209,13 +209,26 @@ async def get_queue(
     db: AsyncSession,
     adjuster_id: uuid.UUID | None = None,
     unassigned_only: bool = False,
+    include_auto_approved: bool = True,
+    include_finalized: bool = False,
+    status_filter: ClaimStatus | None = None,
 ) -> list[Claim]:
-    """Returns claims sorted by SLA urgency."""
-    query = select(Claim).where(
-        Claim.status.not_in(
-            [ClaimStatus.FINALIZED, ClaimStatus.REJECTED, ClaimStatus.AUTO_APPROVED]
-        )
-    )
+    """
+    Returns claims sorted by SLA urgency.
+    Keeps auto-approved and in-process claims visible in the active queue so they
+    never disappear post-adjudication.
+    """
+    query = select(Claim).options(selectinload(Claim.adjudication_result))
+
+    if status_filter:
+        query = query.where(Claim.status == status_filter)
+    else:
+        excluded = [ClaimStatus.REJECTED]
+        if not include_finalized:
+            excluded.append(ClaimStatus.FINALIZED)
+        if not include_auto_approved:
+            excluded.append(ClaimStatus.AUTO_APPROVED)
+        query = query.where(Claim.status.not_in(excluded))
 
     if unassigned_only:
         query = query.where(Claim.assigned_adjuster_id == None)  # noqa: E711

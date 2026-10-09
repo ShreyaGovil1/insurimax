@@ -108,11 +108,17 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             extracted_data=extracted_data,
             policy_rules=policy_rules,
             non_payable_items=non_payable_items,
+            claim_patient_name=claim.patient_name,
+            claim_hospital_name=claim.hospital_name,
         )
 
-        # ── Parse Gemini output ────────────────────────────────────────────────
+        # ── Parse new 5-step adjudication output ──────────────────────────────
         summary = gemini_output.get("adjudication_summary", {})
+        financial = gemini_output.get("financial_breakdown", {})
+        flagged_infractions = gemini_output.get("flagged_infractions_or_reasons", [])
+        required_actions = gemini_output.get("required_actions", {})
         line_decisions = gemini_output.get("line_item_decisions", [])
+        audit_status = summary.get("status", "APPROVED")  # APPROVED | DENIED | QUERY_RAISED
 
         # ── Delete old line items if re-running ────────────────────────────────
         old_items_result = await db.execute(
@@ -165,13 +171,69 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
 
         await db.flush()
 
+        # ── Cross-validate Patient Identity & Bill Validity ───────────────────
+        bill_patient = extracted_data.get("patient") or {}
+        bill_patient_name = (bill_patient.get("name") or "").strip()
+        claim_patient_name = (claim.patient_name or "").strip()
+
+        # Exact match comparison (normalized case and spacing)
+        is_exact_name_match = (
+            bool(bill_patient_name)
+            and bool(claim_patient_name)
+            and bill_patient_name.lower() == claim_patient_name.lower()
+        )
+
+        existing_flags = list(gemini_output.get("flags") or [])
+        if not is_exact_name_match and bill_patient_name:
+            mismatch_flag = (
+                f"CRITICAL IDENTITY MISMATCH: Patient name on hospital bill ('{bill_patient_name}') "
+                f"does not match insured claimant name ('{claim_patient_name}'). "
+                f"Insurance validity rules require an exact match. Auto-approval is strictly blocked."
+            )
+            if mismatch_flag not in existing_flags:
+                existing_flags.insert(0, mismatch_flag)
+            flagged_count = max(flagged_count, 1)
+            # Override agent status to DENIED if it didn't already catch this
+            if audit_status != "DENIED":
+                audit_status = "DENIED"
+                summary["status"] = "DENIED"
+
+        gemini_output["flags"] = existing_flags
+
+        # ── Build deduction breakdown from financial_breakdown ─────────────────
+        deduction_breakdown = {
+            "room_rent_excess_inr": round(float(financial.get("room_rent_deduction", 0)), 2),
+            "icu_excess_inr": 0.0,
+            "non_payables_inr": round(float(financial.get("consumables_deduction", 0)), 2),
+            "copay_inr": round(float(financial.get("co_pay_applied_amount", 0)), 2),
+            "proportional_deductions_inr": round(float(financial.get("proportional_charge_deduction", 0)), 2),
+            "exclusions_inr": 0.0,
+            "sub_limit_deductions_inr": 0.0,
+            "other_deductions_inr": 0.0,
+        }
+
+        # ── Determine confidence score from line items ─────────────────────────
+        if line_decisions:
+            avg_conf = sum(
+                float(li.get("confidence", 0.95)) for li in line_decisions
+            ) / len(line_decisions)
+        else:
+            avg_conf = 0.95
+        # Override confidence on identity mismatch or denial
+        if not is_exact_name_match and bill_patient_name:
+            avg_conf = 0.35
+        elif audit_status == "DENIED":
+            avg_conf = min(avg_conf, 0.5)
+        elif audit_status == "QUERY_RAISED":
+            avg_conf = min(avg_conf, 0.6)
+
         # ── Update adjudication result ─────────────────────────────────────────
         adj.status = AdjudicationStatus.COMPLETED
-        adj.total_billed_inr = float(summary.get("total_billed_inr", 0))
-        adj.total_approved_inr = float(summary.get("total_approved_inr", 0))
-        adj.total_deducted_inr = float(summary.get("total_deducted_inr", 0))
-        adj.deduction_breakdown = summary.get("deduction_breakdown")
-        adj.confidence_score = float(summary.get("confidence_score", 0))
+        adj.total_billed_inr = round(float(financial.get("total_billed_amount", 0)), 2)
+        adj.total_approved_inr = round(float(financial.get("total_approved_amount", 0)), 2)
+        adj.total_deducted_inr = round(float(financial.get("total_deductions", 0)), 2)
+        adj.deduction_breakdown = deduction_breakdown
+        adj.confidence_score = round(avg_conf, 4)
         adj.flagged_items_count = flagged_count
         adj.non_payable_items_count = non_payable_count
         adj.gemini_model_used = settings.GEMINI_MODEL
@@ -179,20 +241,32 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         adj.completion_tokens = completion_tokens
         adj.gemini_raw_response = gemini_output
 
-        # Check auto-approval thresholds
-        auto_approvable = summary.get("auto_approvable", False)
-        auto_approvable = False
-        if (
-            auto_approvable
-            and adj.confidence_score >= settings.AUTO_APPROVAL_CONFIDENCE_THRESHOLD
-            and (adj.total_approved_inr or 0) <= settings.AUTO_APPROVAL_MAX_AMOUNT_INR
-        ):
-            adj.auto_approved = True
-            claim.status = ClaimStatus.AUTO_APPROVED
+        # ── Auto-approval logic driven by 5-step status ────────────────────────
+        if audit_status == "APPROVED" and is_exact_name_match:
+            if (
+                avg_conf >= settings.AUTO_APPROVAL_CONFIDENCE_THRESHOLD
+                and (adj.total_approved_inr or 0) <= settings.AUTO_APPROVAL_MAX_AMOUNT_INR
+                and flagged_count == 0
+            ):
+                adj.auto_approved = True
+                claim.status = ClaimStatus.AUTO_APPROVED
+            else:
+                adj.auto_approved = False
+                claim.status = ClaimStatus.IN_REVIEW
+        elif audit_status == "DENIED":
+            adj.auto_approved = False
+            adj.total_approved_inr = 0.0
+            claim.status = ClaimStatus.IN_REVIEW
+        elif audit_status == "QUERY_RAISED":
+            adj.auto_approved = False
+            adj.total_approved_inr = 0.0
+            claim.status = ClaimStatus.IN_REVIEW
         else:
+            adj.auto_approved = False
             claim.status = ClaimStatus.IN_REVIEW
 
-        # Sync amounts to claim
+        # Sync amounts to claim (reconcile billed amount with audited bill total)
+        claim.billed_amount = adj.total_billed_inr
         claim.approved_amount = adj.total_approved_inr
         claim.deducted_amount = adj.total_deducted_inr
         claim.ai_confidence_score = adj.confidence_score
@@ -207,16 +281,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         await db.flush()
         raise
 
-    # Re-fetch with line_items eagerly loaded — the adj object returned from
-    # run_adjudication() was loaded via Claim.adjudication_result which does NOT
-    # include line_items. Pydantic serialization will hit a lazy-load which
-    # raises MissingGreenlet in async context.
-    refreshed = await db.execute(
-        select(AdjudicationResult)
-        .where(AdjudicationResult.id == adj.id)
-        .options(selectinload(AdjudicationResult.line_items))
-    )
-    return refreshed.scalar_one()
+    return adj
 
 
 async def get_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> AdjudicationResult | None:

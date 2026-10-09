@@ -1,7 +1,39 @@
+# Virtual environments
 .venv
+venv
+env
+ENV
+
+# IDE & Editor files
 .idea
+.vscode
 .jbeval
+*.swp
+*.swo
+
+# Git
 .git
+.gitignore
+
+# Python cache & bytecode
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Environment files with secrets
 .env
+.env.*
+!.env.example
+
+# Temporary / logs
+*.log
+storage_local/
+scratch/
+build/
+dist/
+*.egg-info/

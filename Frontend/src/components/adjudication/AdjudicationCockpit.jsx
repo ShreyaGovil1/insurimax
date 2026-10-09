@@ -19,6 +19,9 @@ import {
   Download,
   Printer,
   Edit3,
+  ShieldAlert,
+  AlertOctagon,
+  Unlock,
 } from "lucide-react"
 import { useParams, useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
@@ -131,9 +134,13 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
     try {
       const res = await api.adjudication.run(claimId)
       setAdjudication(res)
+      // Reload claim record so status, billed amount, and badges update immediately
+      const updatedClaim = await api.claims.getById(claimId).catch(() => null)
+      if (updatedClaim) setClaim(updatedClaim)
+
       toast({
         title: "Adjudication Complete",
-        description: "Gemini 1.5 Pro evaluated all line items against policy rules.",
+        description: "Gemini evaluated all line items against policy rules and verified bill validity.",
         variant: "success",
       })
       if (res.line_items?.length > 0) {
@@ -147,6 +154,25 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
       })
     } finally {
       setRunningPipeline(false)
+    }
+  }
+
+  // Re-open/unlock finalized claim for audit
+  const handleUnlockClaim = async () => {
+    try {
+      await api.claims.updateStatus(claimId, "in_review", "Unlocked for audit review and re-adjudication")
+      await loadClaimData()
+      toast({
+        title: "Claim Unlocked",
+        description: "Status reset to In Review. You can now re-audit or run AI pipeline.",
+        variant: "info",
+      })
+    } catch (err) {
+      toast({
+        title: "Unlock Failed",
+        description: err.message,
+        variant: "destructive",
+      })
     }
   }
 
@@ -348,14 +374,25 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           </Button>
 
           {isFinalized ? (
-            <Button
-              size="sm"
-              onClick={handleViewAuditReport}
-              className="text-xs font-semibold gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
-            >
-              <FileCheck className="w-3.5 h-3.5" />
-              <span>Compliance Audit Report</span>
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleUnlockClaim}
+                className="text-xs font-semibold gap-1.5 border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                <span>Unlock for Re-Audit</span>
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleViewAuditReport}
+                className="text-xs font-semibold gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
+              >
+                <FileCheck className="w-3.5 h-3.5" />
+                <span>Compliance Audit Report</span>
+              </Button>
+            </div>
           ) : (
             <Button
               size="sm"
@@ -368,6 +405,49 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           )}
         </div>
       </div>
+
+      {/* Critical Identity Mismatch / Fraud Alert Banner */}
+      {(() => {
+        const rawFlags = adjudication?.gemini_raw_response?.flags || []
+        const mismatchFlag = rawFlags.find((f) => String(f).includes("IDENTITY MISMATCH"))
+        if (!mismatchFlag) return null
+
+        return (
+          <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-950">
+            <div className="flex items-start space-x-3.5">
+              <div className="p-2.5 bg-rose-600 text-white rounded-2xl shadow-xs shrink-0 mt-0.5">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-black uppercase tracking-wider bg-rose-600 text-white px-2.5 py-0.5 rounded-full animate-pulse">
+                    Critical Identity Mismatch
+                  </span>
+                  <span className="text-xs font-extrabold text-rose-900">
+                    Hospital Bill Patient ≠ Registered Claimant
+                  </span>
+                </div>
+                <p className="text-xs text-rose-800 mt-1 max-w-3xl leading-relaxed">
+                  {mismatchFlag}
+                </p>
+                <p className="text-[11px] text-rose-700 font-medium mt-0.5">
+                  Automated approval has been blocked. An exact name match is required under IRDAI claims adjudication standards.
+                </p>
+              </div>
+            </div>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setActiveTab("documents")}
+              className="shrink-0 text-xs font-bold border-rose-300 bg-white text-rose-800 hover:bg-rose-100 shadow-2xs cursor-pointer gap-1.5"
+            >
+              <FileText className="w-3.5 h-3.5 text-rose-600" />
+              <span>Inspect Bill OCR</span>
+            </Button>
+          </div>
+        )
+      })()}
 
       {/* Phase 4 Financial Summary Bar */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-xs">
@@ -487,7 +567,16 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
 
       {/* Sub-view Content */}
       {activeTab === "documents" && (
-        <DocumentExtractionView claimId={claimId} />
+        <DocumentExtractionView
+          claimId={claimId}
+          claim={claim}
+          onRunAdjudication={async () => {
+            await handleRunAdjudication()
+            setActiveTab("adjudication")
+          }}
+          onSwitchToAdjudication={() => setActiveTab("adjudication")}
+          runningPipeline={runningPipeline}
+        />
       )}
 
       {activeTab === "queries" && (

@@ -75,6 +75,7 @@ class AdjudicationResultRead(BaseSchema):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+    gemini_raw_response: dict | None = None
     line_items: list[LineItemDecisionRead] = []
 
 

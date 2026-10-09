@@ -39,6 +39,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
   }
 
   const [activeTab, setActiveTab] = useState("assigned") // "assigned" | "unassigned"
+  const [statusFilter, setStatusFilter] = useState("all") // "all" | "in_review" | "auto_approved" | "mismatch"
   const [claims, setClaims] = useState([])
   const [unassignedClaims, setUnassignedClaims] = useState([])
   const [loading, setLoading] = useState(true)
@@ -101,14 +102,38 @@ export function AdjusterQueueView({ onSelectClaim }) {
   }
 
   const displayedList = activeTab === "unassigned" ? unassignedClaims : claims
+
+  const inReviewCount = displayedList.filter(
+    (c) => c.status === "in_review" || c.status === "submitted" || c.status === "adjudication_in_progress"
+  ).length
+  const autoApprovedCount = displayedList.filter(
+    (c) => c.status === "auto_approved" || c.status === "approved"
+  ).length
+  const mismatchCount = displayedList.filter(
+    (c) => c.has_identity_mismatch || c.status === "escalated" || (c.flagged_items_count && c.flagged_items_count > 0)
+  ).length
+
   const filteredClaims = displayedList.filter((c) => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return (
-      c.patient_name?.toLowerCase().includes(q) ||
-      c.claim_number?.toLowerCase().includes(q) ||
-      c.hospital_name?.toLowerCase().includes(q)
-    )
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      const matches =
+        c.patient_name?.toLowerCase().includes(q) ||
+        c.claim_number?.toLowerCase().includes(q) ||
+        c.hospital_name?.toLowerCase().includes(q)
+      if (!matches) return false
+    }
+
+    if (statusFilter === "in_review") {
+      return c.status === "in_review" || c.status === "submitted" || c.status === "adjudication_in_progress"
+    }
+    if (statusFilter === "auto_approved") {
+      return c.status === "auto_approved" || c.status === "approved"
+    }
+    if (statusFilter === "mismatch") {
+      return Boolean(c.has_identity_mismatch || c.status === "escalated" || (c.flagged_items_count && c.flagged_items_count > 0))
+    }
+
+    return true
   })
 
   // Urgent breach count (<30 min)
@@ -118,8 +143,6 @@ export function AdjusterQueueView({ onSelectClaim }) {
     const diff = (new Date(c.sla_deadline).getTime() - Date.now()) / (1000 * 60)
     return diff < 30
   }).length
-
-  const autoApprovedCount = claims.filter((c) => c.status === "auto_approved" || c.status === "approved").length
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto px-4 sm:px-6 py-4">
@@ -227,7 +250,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
 
       {/* Main Queue Card with Pill Navigation & Filter */}
       <Card className="rounded-3xl border-slate-200/80 shadow-xs overflow-hidden">
-        <CardHeader className="pb-3 border-b border-slate-100/80">
+        <CardHeader className="pb-3 border-b border-slate-100/80 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             
             {/* Ronas IT Segmented Pill Navigation */}
@@ -265,6 +288,55 @@ export function AdjusterQueueView({ onSelectClaim }) {
               />
             </div>
           </div>
+
+          {/* Secondary Status Filter Pills (Submitted, Auto-Approved, In Review, Mismatch) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
+            <button
+              onClick={() => setStatusFilter("all")}
+              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                statusFilter === "all"
+                  ? "bg-slate-900 text-white font-bold"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              All Cases ({displayedList.length})
+            </button>
+
+            <button
+              onClick={() => setStatusFilter("in_review")}
+              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                statusFilter === "in_review"
+                  ? "bg-blue-600 text-white font-bold"
+                  : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+              }`}
+            >
+              In Review / Submitted ({inReviewCount})
+            </button>
+
+            <button
+              onClick={() => setStatusFilter("auto_approved")}
+              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                statusFilter === "auto_approved"
+                  ? "bg-emerald-600 text-white font-bold"
+                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+              }`}
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Auto-Approved ({autoApprovedCount})</span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter("mismatch")}
+              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                statusFilter === "mismatch"
+                  ? "bg-rose-600 text-white font-bold"
+                  : "bg-rose-50 text-rose-700 hover:bg-rose-100"
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3" />
+              <span>Identity Mismatch / Flagged ({mismatchCount})</span>
+            </button>
+          </div>
         </CardHeader>
 
         <CardContent className="p-0">
@@ -300,8 +372,14 @@ export function AdjusterQueueView({ onSelectClaim }) {
                           {claim.claim_number}
                         </div>
                         <div className="text-slate-600 font-medium">{claim.patient_name}</div>
+                        {claim.has_identity_mismatch && (
+                          <div className="inline-flex items-center gap-1 text-[9px] font-black text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 mt-1 shadow-2xs">
+                            <ShieldAlert className="w-2.5 h-2.5" />
+                            <span>Bill Name Mismatch</span>
+                          </div>
+                        )}
                         {claim.policy_number && (
-                          <div className="text-[10px] text-slate-400 font-mono">Pol: {claim.policy_number}</div>
+                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">Pol: {claim.policy_number}</div>
                         )}
                       </td>
 
@@ -346,20 +424,32 @@ export function AdjusterQueueView({ onSelectClaim }) {
                       </td>
 
                       <td className="py-3 px-4">
-                        <Badge
-                          variant={
-                            claim.status === "auto_approved" || claim.status === "approved"
-                              ? "lime"
-                              : claim.status === "escalated"
-                              ? "destructive"
-                              : claim.status === "queried"
-                              ? "warning"
-                              : "secondary"
-                          }
-                          className="capitalize text-[10px] font-bold"
-                        >
-                          {claim.status?.replace("_", " ")}
-                        </Badge>
+                        {claim.status === "auto_approved" ? (
+                          <Badge variant="lime" className="text-[10px] font-black gap-1 uppercase tracking-wider">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>Auto-Approved</span>
+                          </Badge>
+                        ) : claim.has_identity_mismatch ? (
+                          <Badge variant="destructive" className="text-[10px] font-black gap-1 uppercase tracking-wider">
+                            <AlertOctagon className="w-2.5 h-2.5" />
+                            <span>Flagged Mismatch</span>
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant={
+                              claim.status === "approved"
+                                ? "lime"
+                                : claim.status === "escalated"
+                                ? "destructive"
+                                : claim.status === "queried"
+                                ? "warning"
+                                : "secondary"
+                            }
+                            className="capitalize text-[10px] font-bold"
+                          >
+                            {claim.status?.replace("_", " ")}
+                          </Badge>
+                        )}
                       </td>
 
                       <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
