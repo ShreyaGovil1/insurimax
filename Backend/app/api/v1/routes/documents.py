@@ -23,7 +23,7 @@ from app.schemas.document import (
     ExtractionJobRead,
 )
 from app.schemas.common import MessageResponse
-from app.services import document_service
+from app.services import claim_service, document_service
 
 router = APIRouter(tags=["Documents & Extraction"])
 
@@ -173,8 +173,51 @@ async def get_extracted_data(
     """
     Merged extracted data from all completed extraction jobs for a claim.
     Manual corrections (corrected_payload) override raw Gemini output.
+    Cross-checks extracted patient name against registered claim patient name.
     """
     data = await document_service.get_claim_extracted_data(db, claim_id)
+    claim = await claim_service.get_claim(db, claim_id)
+
+    if claim and isinstance(data, dict):
+        bill_patient = data.get("patient") or {}
+        bill_patient_name = (bill_patient.get("name") or "").strip()
+        claim_patient_name = (claim.patient_name or "").strip()
+
+        is_exact_name_match = (
+            bool(bill_patient_name)
+            and bool(claim_patient_name)
+            and bill_patient_name.lower() == claim_patient_name.lower()
+        )
+
+        bill_hospital = data.get("hospital") or {}
+        bill_hospital_name = (bill_hospital.get("name") or "").strip()
+        claim_hospital_name = (claim.hospital_name or "").strip()
+        is_hospital_match = (
+            bool(bill_hospital_name)
+            and bool(claim_hospital_name)
+            and (
+                bill_hospital_name.lower() in claim_hospital_name.lower()
+                or claim_hospital_name.lower() in bill_hospital_name.lower()
+            )
+        )
+
+        data["_verification"] = {
+            "is_name_match": is_exact_name_match,
+            "claim_patient_name": claim_patient_name,
+            "bill_patient_name": bill_patient_name,
+            "has_mismatch": bool(bill_patient_name and not is_exact_name_match),
+            "is_hospital_match": is_hospital_match,
+            "claim_hospital_name": claim_hospital_name,
+            "bill_hospital_name": bill_hospital_name,
+            "message": (
+                "Exact match verified"
+                if is_exact_name_match
+                else f"Patient name on hospital bill ('{bill_patient_name}') does not match registered claimant ('{claim_patient_name}'). Exact match required."
+            )
+            if bill_patient_name
+            else "No patient name detected on bill",
+        }
+
     return {"claim_id": str(claim_id), "extracted_data": data}
 
 

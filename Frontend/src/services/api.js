@@ -4,7 +4,10 @@
  * Uses real JWT token authentication and connects to live PostgreSQL database.
  */
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api/v1"
+const BASE_URL =
+  (typeof window !== "undefined" && window.__ENV__?.VITE_API_URL) ||
+  import.meta.env.VITE_API_URL ||
+  "http://127.0.0.1:8000/api/v1"
 
 // ── Auth Token Storage ───────────────────────────────────────────────────────
 export function getAccessToken() {

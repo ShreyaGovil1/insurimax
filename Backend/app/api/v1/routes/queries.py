@@ -115,6 +115,8 @@ async def resolve_query(
 async def get_queue(
     db: DBSession,
     current_user: CurrentUser,
+    claim_status: ClaimStatus | None = Query(None, alias="status"),
+    include_finalized: bool = Query(False),
 ):
     """
     Adjuster's assigned case queue, sorted by SLA urgency (nearest deadline first).
@@ -125,24 +127,37 @@ async def get_queue(
     if current_user.role == UserRole.ADJUSTER:
         adjuster_id = current_user.id
 
-    claims = await analytics_service.get_queue(db, adjuster_id=adjuster_id)
-    return [
-        ClaimSummary(
-            id=c.id,
-            claim_number=c.claim_number,
-            patient_name=c.patient_name,
-            hospital_name=c.hospital_name,
-            billed_amount=c.billed_amount,
-            approved_amount=c.approved_amount,
-            status=c.status,
-            ai_confidence_score=c.ai_confidence_score,
-            flagged_items_count=c.__dict__.get("adjudication_result") and c.__dict__["adjudication_result"].flagged_items_count,
-            sla_deadline=c.sla_deadline,
-            sla_breached=c.sla_breached,
-            submitted_at=c.submitted_at,
+    claims = await analytics_service.get_queue(
+        db,
+        adjuster_id=adjuster_id,
+        status_filter=claim_status,
+        include_finalized=include_finalized,
+    )
+    summaries: list[ClaimSummary] = []
+    for c in claims:
+        adj = c.adjudication_result if hasattr(c, "adjudication_result") else None
+        has_mismatch = False
+        if adj and adj.gemini_raw_response:
+            flags = adj.gemini_raw_response.get("flags") or []
+            has_mismatch = any("IDENTITY MISMATCH" in str(f) for f in flags)
+        summaries.append(
+            ClaimSummary(
+                id=c.id,
+                claim_number=c.claim_number,
+                patient_name=c.patient_name,
+                hospital_name=c.hospital_name,
+                billed_amount=c.billed_amount,
+                approved_amount=c.approved_amount,
+                status=c.status,
+                ai_confidence_score=c.ai_confidence_score,
+                flagged_items_count=adj.flagged_items_count if adj else c.__dict__.get("adjudication_result") and c.__dict__["adjudication_result"].flagged_items_count,
+                sla_deadline=c.sla_deadline,
+                sla_breached=c.sla_breached,
+                submitted_at=c.submitted_at,
+                has_identity_mismatch=has_mismatch,
+            )
         )
-        for c in claims
-    ]
+    return summaries
 
 
 @router.get("/queue/unassigned", response_model=list[ClaimSummary])
@@ -162,7 +177,7 @@ async def get_unassigned_queue(
             approved_amount=c.approved_amount,
             status=c.status,
             ai_confidence_score=c.ai_confidence_score,
-            flagged_items_count=c.__dict__.get("adjudication_result") and c.__dict__["adjudication_result"].flagged_items_count,
+            flagged_items_count=None,
             sla_deadline=c.sla_deadline,
             sla_breached=c.sla_breached,
             submitted_at=c.submitted_at,

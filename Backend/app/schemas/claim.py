@@ -62,6 +62,7 @@ class ClaimSummary(BaseSchema):
     sla_deadline: datetime | None
     sla_breached: bool
     submitted_at: datetime
+    has_identity_mismatch: bool = False
 
 
 class ClaimStatusUpdate(BaseSchema):

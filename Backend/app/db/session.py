@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _ssl_context = ssl.create_default_context()
 _ssl_context.check_hostname = False
 _ssl_context.verify_mode = ssl.CERT_NONE  # Supabase pooler uses self-signed cert
+_connect_args = {"ssl": _ssl_context} if settings.DB_SSL else {}
 
 # ── Engine ─────────────────────────────────────────────────────────────────────
 _use_null_pool = settings.DB_POOL_SIZE == 0
@@ -34,7 +35,7 @@ if _use_null_pool:
         echo=False,           # never echo in production; use middleware for query tracing
         poolclass=NullPool,
         future=True,
-        connect_args={"ssl": _ssl_context},
+        connect_args=_connect_args,
     )
 else:
     # Persistent server: keep a warm pool — eliminates per-request reconnect cost
@@ -54,7 +55,7 @@ else:
         pool_recycle=settings.DB_POOL_RECYCLE,
         pool_pre_ping=True,   # validates connection before handing it out (catches stale connections)
         future=True,
-        connect_args={"ssl": _ssl_context},
+        connect_args=_connect_args,
     )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -2,10 +2,11 @@
 Application configuration using pydantic-settings.
 Values are loaded from environment variables / .env files.
 """
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
     DATABASE_URL: str | None = None
+    DB_SSL: bool = True
 
     # ── Connection pool ────────────────────────────────────────────────────────
     # NullPool = one new TCP+SSL connection per request (good for Cloud Run,
@@ -90,10 +92,27 @@ class Settings(BaseSettings):
     AUTO_APPROVAL_MAX_AMOUNT_INR: float = 50_000.0
 
     # ── CORS ──────────────────────────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: list[str] | str = [
         "http://localhost:5173",
         "http://localhost:3000",
     ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str or v_str == "*":
+                return ["*"]
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    return json.loads(v_str)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v_str.split(",") if origin.strip()]
+        elif isinstance(v, (list, set, tuple)):
+            return [str(item).strip() for item in v if item]
+        return v
 
     # ── Observability / OpenTelemetry ─────────────────────────────────────────
     # Exporter: "gcp" (Cloud Trace), "otlp" (any OTLP collector), "console", "none"

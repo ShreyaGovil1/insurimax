@@ -360,6 +360,12 @@ def _run_headful_session(payload: Dict[str, Any], timeout_ms: int = 45000) -> No
 
 def _autofill_sync(payload: Dict[str, Any], headless: bool, timeout_ms: int) -> Dict[str, Any]:
     """Synchronous worker function executed in background thread."""
+    import os
+    has_display = bool(os.environ.get("DISPLAY") or os.name == "nt")
+    if not headless and not has_display:
+        logger.info("No desktop display detected (running in container/headless environment); falling back to headless automation.")
+        headless = True
+
     if not headless:
         # Launch visible browser in background thread so the API responds immediately
         t = threading.Thread(target=_run_headful_session, args=(payload, timeout_ms), daemon=True)
@@ -390,40 +396,41 @@ def _autofill_sync(payload: Dict[str, Any], headless: bool, timeout_ms: int) -> 
         "message": ""
     }
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=STEALTH_CHROME_ARGS,
-            ignore_default_args=["--enable-automation"],
-        )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=STEALTH_USER_AGENT,
-            locale="en-IN",
-            timezone_id="Asia/Kolkata",
-        )
-        page = context.new_page()
-        page.add_init_script(STEALTH_INIT_SCRIPT)
-
-        try:
-            logger.info("Agent navigating to %s in headless verification mode", BIMA_BHAROSA_URL)
-            page.goto(BIMA_BHAROSA_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-            page.wait_for_timeout(2000)
-
-            filled = _fill_bima_bharosa_form(page, payload, inject_ui_banner=False)
-            results["fields_filled"] = filled
-            results["status"] = "completed"
-            results["message"] = (
-                f"Stealth prefill verified {len(filled)} fields including all 5 Section 3 "
-                "policy dropdowns. OTP trigger safely paused."
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=STEALTH_CHROME_ARGS,
+                ignore_default_args=["--enable-automation"],
             )
-        except Exception as exc:
-            logger.error("Error during headless Bima Bharosa verification: %s", exc)
-            results["status"] = "failed"
-            results["errors"].append(str(exc))
-            results["message"] = f"Automation check error: {exc}"
-        finally:
-            browser.close()
+            try:
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 800},
+                    user_agent=STEALTH_USER_AGENT,
+                    locale="en-IN",
+                    timezone_id="Asia/Kolkata",
+                )
+                page = context.new_page()
+                page.add_init_script(STEALTH_INIT_SCRIPT)
+
+                logger.info("Agent navigating to %s in headless verification mode", BIMA_BHAROSA_URL)
+                page.goto(BIMA_BHAROSA_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+                page.wait_for_timeout(2000)
+
+                filled = _fill_bima_bharosa_form(page, payload, inject_ui_banner=False)
+                results["fields_filled"] = filled
+                results["status"] = "completed"
+                results["message"] = (
+                    f"Stealth prefill verified {len(filled)} fields including all 5 Section 3 "
+                    "policy dropdowns. OTP trigger safely paused."
+                )
+            finally:
+                browser.close()
+    except Exception as exc:
+        logger.error("Error during headless Bima Bharosa verification: %s", exc)
+        results["status"] = "failed"
+        results["errors"].append(str(exc))
+        results["message"] = f"Automation check error: {exc}"
 
     return results
 

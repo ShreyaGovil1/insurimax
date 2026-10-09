@@ -84,6 +84,10 @@ async def list_claims(
         # adjudication_result is now eagerly loaded by list_claims — access it
         # directly from the instance dict to avoid any lazy-load attempt.
         adj = c.__dict__.get("adjudication_result")
+        has_mismatch = False
+        if adj and adj.gemini_raw_response:
+            flags = adj.gemini_raw_response.get("flags") or []
+            has_mismatch = any("IDENTITY MISMATCH" in str(f) for f in flags)
         summaries.append(
             ClaimSummary(
                 id=c.id,
@@ -98,6 +102,7 @@ async def list_claims(
                 sla_deadline=c.sla_deadline,
                 sla_breached=c.sla_breached,
                 submitted_at=c.submitted_at,
+                has_identity_mismatch=has_mismatch,
             )
         )
 
