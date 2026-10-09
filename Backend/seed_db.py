@@ -315,9 +315,22 @@ async def seed():
             },
         ]
 
+        # Insurer organizations (claims are routed to the insurer chosen at creation)
+        insurer_orgs = {}
+        for iname in sorted({cd["insurer_name"] for cd in claims_data}):
+            res = await db.execute(select(Organization).where(Organization.name == iname))
+            io = res.scalar_one_or_none()
+            if not io:
+                io = Organization(id=uuid.uuid4(), name=iname, org_type=OrgType.INSURER)
+                db.add(io)
+            insurer_orgs[iname] = io
+        await db.flush()
+
         for cd in claims_data:
             res = await db.execute(select(Claim).where(Claim.claim_number == cd["claim_number"]))
             existing = res.scalar_one_or_none()
+            if existing and existing.insurer_org_id is None:
+                existing.insurer_org_id = insurer_orgs[cd["insurer_name"]].id
             if not existing:
                 c = Claim(
                     id=cd["id"],
@@ -326,6 +339,7 @@ async def seed():
                     hospital_name=cd["hospital_name"],
                     hospital_org_id=cd["hospital_org_id"],
                     insurer_name=cd["insurer_name"],
+                    insurer_org_id=insurer_orgs[cd["insurer_name"]].id,
                     policy_number=cd["policy_number"],
                     policy_version_id=cd["policy_version_id"],
                     billed_amount=cd["billed_amount"],

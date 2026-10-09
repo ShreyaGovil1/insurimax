@@ -265,6 +265,7 @@ export function AdminPanelView() {
               <TableRow>
                 <TableHead>User</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Organization</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Last login</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -273,12 +274,12 @@ export function AdminPanelView() {
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-slate-500 text-xs">Loading…</TableCell>
+                  <TableCell colSpan={6} className="text-center text-slate-500 text-xs">Loading…</TableCell>
                 </TableRow>
               )}
               {!loading && users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-slate-500 text-xs">No users found.</TableCell>
+                  <TableCell colSpan={6} className="text-center text-slate-500 text-xs">No users found.</TableCell>
                 </TableRow>
               )}
               {!loading &&
@@ -302,6 +303,20 @@ export function AdminPanelView() {
                         >
                           {ROLES.map((r) => (
                             <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          className="h-8 text-xs w-48"
+                          value={u.org_id || ""}
+                          onChange={(e) =>
+                            updateUser(u, { org_id: e.target.value || null }, "Organization updated")
+                          }
+                        >
+                          <option value="">No organization</option>
+                          {orgs.map((o) => (
+                            <option key={o.id} value={o.id}>{o.name}</option>
                           ))}
                         </Select>
                       </TableCell>

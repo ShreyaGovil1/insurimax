@@ -174,8 +174,10 @@ async def get_claim_full_trace(
     """
     Every action, override, and timestamp on a single claim — the full compliance trace.
     """
+    from app.core.access import require_claim_access
     from app.services import claim_service, adjudication_service
 
+    await require_claim_access(db, claim_id, current_user)
     claim = await claim_service.get_claim(db, claim_id)
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")

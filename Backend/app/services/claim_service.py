@@ -30,6 +30,7 @@ async def create_claim(db: AsyncSession, data: ClaimCreate, created_by_id: uuid.
         hospital_name=data.hospital_name,
         hospital_org_id=data.hospital_org_id,
         insurer_name=data.insurer_name,
+        insurer_org_id=data.insurer_org_id,
         tpa_org_id=data.tpa_org_id,
         policy_number=data.policy_number,
         uhid=data.uhid,
@@ -72,6 +73,7 @@ async def list_claims(
     db: AsyncSession,
     status: ClaimStatus | None = None,
     hospital_org_id: uuid.UUID | None = None,
+    insurer_org_id: uuid.UUID | None = None,
     assigned_adjuster_id: uuid.UUID | None = None,
     sla_remaining_lt_minutes: int | None = None,
     page: int = 1,
@@ -83,6 +85,8 @@ async def list_claims(
         query = query.where(Claim.status == status)
     if hospital_org_id:
         query = query.where(Claim.hospital_org_id == hospital_org_id)
+    if insurer_org_id:
+        query = query.where(Claim.insurer_org_id == insurer_org_id)
     if assigned_adjuster_id:
         query = query.where(Claim.assigned_adjuster_id == assigned_adjuster_id)
     if sla_remaining_lt_minutes is not None:

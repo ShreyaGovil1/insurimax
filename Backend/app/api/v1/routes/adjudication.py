@@ -12,6 +12,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.core.access import require_claim_access
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.schemas.adjudication import (
     AdjudicationResultRead,
@@ -68,6 +69,7 @@ async def get_adjudication(
     current_user: CurrentUser,
 ):
     """Return the full adjudication result with all line-item decisions."""
+    await require_claim_access(db, claim_id, current_user)
     adj = await adjudication_service.get_adjudication(db, claim_id)
     if not adj:
         raise HTTPException(
@@ -88,6 +90,7 @@ async def get_line_item(
     current_user: CurrentUser,
 ):
     """Fetch a single line-item decision."""
+    await require_claim_access(db, claim_id, current_user)
     item = await adjudication_service.get_line_item(db, item_id)
     if not item:
         raise HTTPException(
@@ -110,6 +113,7 @@ async def get_line_item_explanation(
     Phase 2 right-panel: full explanation with policy clause citation.
     Returns the AI reasoning + a direct link to the policy clause.
     """
+    await require_claim_access(db, claim_id, current_user)
     item = await adjudication_service.get_line_item(db, item_id)
     if not item:
         raise HTTPException(

@@ -19,6 +19,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from app.core.access import insurer_scope, require_claim_access
 from app.core.deps import AdjusterOrAbove, AdminOrSenior, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
 from app.models.user import UserRole
@@ -27,6 +28,11 @@ from app.schemas.query import ClaimQueryCreate, ClaimQueryRead, QueryResolveRequ
 from app.services import analytics_service, claim_service, query_service
 
 router = APIRouter(tags=["Queries & Adjuster Workflow"])
+
+
+async def _ensure_query_access(db, query, user) -> None:
+    """A query is only visible to users who can access its claim."""
+    await require_claim_access(db, query.claim_id, user)
 
 
 # ── Claim Queries ─────────────────────────────────────────────────────────────
@@ -63,6 +69,7 @@ async def list_claim_queries(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_claim_access(db, claim_id, current_user)
     return await query_service.list_claim_queries(db, claim_id)
 
 
@@ -75,6 +82,7 @@ async def get_query(
     q = await query_service.get_query(db, query_id)
     if not q:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
+    await _ensure_query_access(db, q, current_user)
     return q
 
 
@@ -89,6 +97,10 @@ async def respond_to_query(
     Hospital desk responds to a query.
     Accepted by any authenticated user (hospital_desk role in production).
     """
+    existing = await query_service.get_query(db, query_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
+    await _ensure_query_access(db, existing, current_user)
     q = await query_service.respond_to_query(db, query_id, body, current_user.id)
     if not q:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
@@ -124,12 +136,21 @@ async def get_queue(
     Regular adjusters only see their own assignments.
     """
     adjuster_id = None
+    hospital_org_id = None
     if current_user.role == UserRole.ADJUSTER:
         adjuster_id = current_user.id
+    elif current_user.role == UserRole.HOSPITAL_DESK:
+        if current_user.org_id is None:
+            return []
+        hospital_org_id = current_user.org_id
+    elif current_user.role not in (UserRole.ADMIN, UserRole.SENIOR_ADJUSTER):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
     claims = await analytics_service.get_queue(
         db,
         adjuster_id=adjuster_id,
+        hospital_org_id=hospital_org_id,
+        insurer_org_id=await insurer_scope(db, current_user),
         status_filter=claim_status,
         include_finalized=include_finalized,
     )

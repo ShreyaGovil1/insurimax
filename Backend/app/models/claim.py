@@ -64,6 +64,12 @@ class Claim(Base):
 
     # Insurance
     insurer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    insurer_org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     tpa_org_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="SET NULL"),

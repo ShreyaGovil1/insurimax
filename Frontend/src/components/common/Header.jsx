@@ -125,14 +125,17 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
         {/* Right Section: Actions, Role Pill & User */}
         <div className="flex items-center space-x-2 sm:space-x-3">
           {/* New Claim Pill Button */}
+          {user?.role === "hospital_desk" && (
           <Button
             size="sm"
+            data-action="new-claim"
             onClick={onNewClaim}
             className="rounded-full bg-slate-950 hover:bg-slate-800 text-white font-semibold text-xs h-8.5 px-3.5 gap-1.5 shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
             <span className="hidden sm:inline">New Claim</span>
           </Button>
+          )}
 
           {/* Interactive Role Switcher Pill */}
           <div className="relative">

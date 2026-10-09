@@ -16,6 +16,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 
+from app.core.access import require_claim_access
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.document import Document
 from app.models.user import User, UserRole
@@ -49,6 +50,7 @@ async def _authorized_document(db, claim_id: uuid.UUID, doc_id: uuid.UUID, user:
     staff can touch any document on the claim; hospital desk only their own organisation's.
     """
     _forbid_patient(user)
+    await require_claim_access(db, claim_id, user)
     doc = await document_service.get_document(db, doc_id)
     if not doc or doc.claim_id != claim_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Document not found")
@@ -76,12 +78,7 @@ async def upload_document(
     File is stored in GCS; metadata is persisted in DB.
     """
     _forbid_patient(current_user)
-    if current_user.role == UserRole.HOSPITAL_DESK:
-        claim = await claim_service.get_claim(db, claim_id)
-        if claim and claim.hospital_org_id and claim.hospital_org_id != current_user.org_id:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, detail="This claim belongs to a different hospital"
-            )
+    await require_claim_access(db, claim_id, current_user)
 
     if not file.filename:
         raise HTTPException(
@@ -123,6 +120,7 @@ async def list_documents(
     current_user: CurrentUser,
 ):
     _forbid_patient(current_user)
+    await require_claim_access(db, claim_id, current_user)
     docs = await document_service.list_claim_documents(db, claim_id)
     if not _is_staff(current_user):
         docs = [d for d in docs if await document_service.is_document_owned_by(db, d, current_user)]

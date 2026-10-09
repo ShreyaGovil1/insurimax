@@ -1,7 +1,8 @@
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
+import { Select } from "../ui/select"
 import { Textarea } from "../ui/textarea"
 import { useToast } from "../ui/toast"
 import { api } from "../../services/api"
@@ -13,13 +14,24 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
   const [formData, setFormData] = useState({
     patient_name: "",
     patient_phone: "",
-    hospital_name: "Apollo Hospital, Bannerghatta",
-    insurer_name: "Star Health & Allied Insurance",
+    insurer_org_id: "",
     policy_number: "",
     uhid: "",
     billed_amount: "",
     adjuster_notes: "",
   })
+  const [insurers, setInsurers] = useState([])
+
+  useEffect(() => {
+    if (!open) return
+    api.claims
+      .listInsurers()
+      .then(setInsurers)
+      .catch((err) =>
+        toast({ title: "Could not load insurers", description: err.message, variant: "destructive" })
+      )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -28,10 +40,10 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!formData.patient_name || !formData.hospital_name) {
+    if (!formData.patient_name || !formData.insurer_org_id) {
       toast({
         title: "Validation Error",
-        description: "Patient Name and Hospital Name are required.",
+        description: "Patient Name and Insurer are required.",
         variant: "destructive",
       })
       return
@@ -42,8 +54,7 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
       const payload = {
         patient_name: formData.patient_name,
         patient_phone: formData.patient_phone || null,
-        hospital_name: formData.hospital_name,
-        insurer_name: formData.insurer_name || null,
+        insurer_org_id: formData.insurer_org_id,
         policy_number: formData.policy_number || null,
         uhid: formData.uhid || null,
         billed_amount: formData.billed_amount ? parseFloat(formData.billed_amount) : null,
@@ -62,8 +73,7 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
       setFormData({
         patient_name: "",
         patient_phone: "",
-        hospital_name: "Apollo Hospital, Bannerghatta",
-        insurer_name: "Star Health & Allied Insurance",
+        insurer_org_id: "",
         policy_number: "",
         uhid: "",
         billed_amount: "",
@@ -124,18 +134,6 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Hospital Name <span className="text-red-500">*</span>
-              </label>
-              <Input
-                name="hospital_name"
-                value={formData.hospital_name}
-                onChange={handleChange}
-                placeholder="e.g. Apollo Hospital"
-                required
-              />
-            </div>
-            <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">UHID / Patient ID</label>
               <Input
                 name="uhid"
@@ -148,13 +146,15 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">Insurer Name</label>
-              <Input
-                name="insurer_name"
-                value={formData.insurer_name}
-                onChange={handleChange}
-                placeholder="e.g. Star Health"
-              />
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Insurer <span className="text-red-500">*</span>
+              </label>
+              <Select name="insurer_org_id" value={formData.insurer_org_id} onChange={handleChange} required>
+                <option value="">Select insurer…</option>
+                {insurers.map((i) => (
+                  <option key={i.id} value={i.id}>{i.name}</option>
+                ))}
+              </Select>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">Policy Number</label>

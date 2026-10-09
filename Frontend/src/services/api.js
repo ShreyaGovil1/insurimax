@@ -285,6 +285,10 @@ export const api = {
       return await apiRequest(`/claims/${claimId}`)
     },
 
+    async listInsurers() {
+      return await apiRequest("/claims/insurers")
+    },
+
     async create(claimData) {
       return await apiRequest("/claims", {
         method: "POST",
