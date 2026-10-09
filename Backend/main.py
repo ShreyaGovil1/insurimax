@@ -1,5 +1,5 @@
 """
-DischargePulse — FastAPI application entry point.
+Insurimax — FastAPI application entry point.
 """
 import logging
 import time
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="DischargePulse API",
+    title="Insurimax API",
     description=(
         "AI-powered insurance claims adjudication platform. "
         "Reduces TPA adjudication time from 3+ hours to under 30 minutes "

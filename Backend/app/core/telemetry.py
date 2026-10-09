@@ -1,5 +1,5 @@
 """
-OpenTelemetry setup for DischargePulse.
+OpenTelemetry setup for Insurimax.
 
 Instruments:
   - FastAPI   → HTTP server spans (method, route, status, latency)
@@ -54,7 +54,7 @@ def setup_telemetry(app: "FastAPI") -> TracerProvider | None:
         SERVICE_NAME: settings.OTEL_SERVICE_NAME,
         SERVICE_VERSION: settings.OTEL_SERVICE_VERSION,
         "deployment.environment": settings.ENVIRONMENT,
-        "service.namespace": "dischargepulse",
+        "service.namespace": "insurimax",
     })
 
     # ── Sampler ───────────────────────────────────────────────────────────────
