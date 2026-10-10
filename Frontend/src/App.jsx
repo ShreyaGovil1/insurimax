@@ -19,6 +19,7 @@ import { HospitalPreCheckView } from "./components/hospital/HospitalPreCheckView
 import { PolicyLibraryView } from "./components/policies/PolicyLibraryView"
 import { AnalyticsComplianceView } from "./components/analytics/AnalyticsComplianceView"
 import { PatientStatusView } from "./components/patient/PatientStatusView"
+import { AdminPanelView } from "./components/admin/AdminPanelView"
 import { ClaimCreateModal } from "./components/claims/ClaimCreateModal"
 
 /**
@@ -44,7 +45,24 @@ function ProtectedRoute({ children }) {
 }
 
 /**
- * Route guard: Redirects already-authenticated users to /queue
+ * Route guard: admins only; others are sent to /queue
+ */
+function AdminRoute({ children }) {
+  const { user } = useAuth()
+  if (user?.role !== "admin") return <Navigate to="/queue" replace />
+  return children
+}
+
+/**
+ * Landing path after login: admins go to the admin panel
+ */
+function HomeRedirect() {
+  const { user } = useAuth()
+  return <Navigate to={user?.role === "admin" ? "/admin" : "/queue"} replace />
+}
+
+/**
+ * Route guard: Redirects already-authenticated users to their home page
  */
 function PublicRoute({ children }) {
   const { isAuthenticated, loading } = useAuth()
@@ -52,7 +70,7 @@ function PublicRoute({ children }) {
   if (loading) return null
 
   if (isAuthenticated) {
-    return <Navigate to="/queue" replace />
+    return <HomeRedirect />
   }
 
   return children ? children : <Outlet />
@@ -120,7 +138,8 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<Navigate to="/queue" replace />} />
+              <Route index element={<HomeRedirect />} />
+              <Route path="admin" element={<AdminRoute><AdminPanelView /></AdminRoute>} />
               <Route path="queue" element={<AdjusterQueueView />} />
               <Route
                 path="claims"
@@ -133,7 +152,7 @@ export default function App() {
                   />
                 }
               />
-              <Route path="claims/:claimId" element={<AdjudicationCockpit />} />
+              <Route path="claims/:claimId/:tab?" element={<AdjudicationCockpit />} />
               <Route path="hospital" element={<HospitalPreCheckView />} />
               <Route path="policies" element={<PolicyLibraryView />} />
               <Route path="analytics" element={<AnalyticsComplianceView />} />

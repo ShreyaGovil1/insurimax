@@ -27,14 +27,20 @@ import {
   ShieldCheck,
   AlertTriangle,
   AlertOctagon,
+  Trash2,
+  Eye,
+  X,
+  ScanSearch,
 } from "lucide-react"
 import { api } from "../../services/api"
+import { useAuth } from "../../context/AuthContext"
 import { formatCurrencyINR } from "../../lib/utils"
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
 import { useToast } from "../ui/toast"
+import { TypedExtractionPanel, effectiveDocType } from "./TypedExtractionPanel"
 
 export function DocumentExtractionView({
   claimId,
@@ -44,9 +50,25 @@ export function DocumentExtractionView({
   runningPipeline = false,
 }) {
   const { toast } = useToast()
+  const { user } = useAuth()
+  const role = user?.role
+  const isStaff = ["admin", "senior_adjuster", "adjuster"].includes(role)
+  const isHospital = role === "hospital_desk"
+  const canUpload = isStaff || isHospital
   const [claim, setClaim] = useState(propClaim || null)
   const [documents, setDocuments] = useState([])
-  const [extractedData, setExtractedData] = useState(null)
+  const [mergedData, setExtractedData] = useState(null)
+  const [selectedDocId, setSelectedDocId] = useState(null)
+  const [docData, setDocData] = useState(null)
+  const [docLoading, setDocLoading] = useState(false)
+  const [previewDoc, setPreviewDoc] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const extractedData = selectedDocId ? docData : mergedData
+  const selectedDoc = documents.find((d) => d.id === selectedDocId) || null
+  // Bills use the line-item view below; every other document type gets its own layout.
+  const selectedType = selectedDoc ? effectiveDocType(selectedDoc.doc_type, docData) : null
+  const typedSelected = Boolean(selectedDoc && selectedType !== "itemized_bill")
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -62,18 +84,87 @@ export function DocumentExtractionView({
     if (propClaim) setClaim(propClaim)
   }, [propClaim])
 
+  const loadDocData = async (docId) => {
+    setDocLoading(true)
+    try {
+      const res = await api.documents.getDocumentExtraction(claimId, docId)
+      setDocData(res?.extracted_data || null)
+      setEditedPayloadJson(JSON.stringify(res?.extracted_data || {}, null, 2))
+      setIsEditingPayload(false)
+    } catch (err) {
+      setDocData(null)
+      toast({ title: "Could not load extraction", description: err.message, variant: "destructive" })
+    } finally {
+      setDocLoading(false)
+    }
+  }
+
+  const handleSelectDocument = async (docId) => {
+    if (selectedDocId === docId) return
+    setSelectedDocId(docId)
+    setSelectedCategoryFilter("all")
+    await loadDocData(docId)
+  }
+
+  const handleClearSelection = () => {
+    setSelectedDocId(null)
+    setDocData(null)
+    setIsEditingPayload(false)
+    setEditedPayloadJson(JSON.stringify(mergedData, null, 2))
+  }
+
+  const handlePreview = async (doc) => {
+    setPreviewDoc(doc)
+    setPreviewUrl(null)
+    setPreviewLoading(true)
+    try {
+      const res = await api.documents.getSignedUrl(claimId, doc.id)
+      setPreviewUrl(res?.signed_url || null)
+    } catch (err) {
+      toast({ title: "Preview failed", description: err.message, variant: "destructive" })
+      setPreviewDoc(null)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const closePreview = () => {
+    setPreviewDoc(null)
+    setPreviewUrl(null)
+  }
+
+  const handleDeleteDocument = async (doc) => {
+    if (!window.confirm(`Delete "${doc.original_filename}"? This also removes its extracted data.`)) return
+    try {
+      await api.documents.delete(claimId, doc.id)
+      toast({ title: "Document deleted", description: doc.original_filename, variant: "success" })
+      if (selectedDocId === doc.id) handleClearSelection()
+      await loadDocumentsAndData()
+    } catch (err) {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" })
+    }
+  }
+
   const loadDocumentsAndData = async () => {
     setLoading(true)
     try {
       const [docs, data, claimData] = await Promise.all([
         api.documents.list(claimId),
-        api.documents.getExtractedData(claimId),
+        isStaff ? api.documents.getExtractedData(claimId).catch(() => null) : Promise.resolve(null),
         propClaim ? Promise.resolve(propClaim) : api.claims.getById(claimId).catch(() => null),
       ])
       setDocuments(docs || [])
       setExtractedData(data)
       if (claimData) setClaim(claimData)
       setEditedPayloadJson(JSON.stringify(data, null, 2))
+      if (selectedDocId) {
+        if (!(docs || []).some((d) => d.id === selectedDocId)) {
+          setSelectedDocId(null)
+          setDocData(null)
+        } else {
+          await loadDocData(selectedDocId)
+        }
+      }
     } catch (err) {
       console.warn("Failed to load documents:", err)
     } finally {
@@ -163,11 +254,16 @@ export function DocumentExtractionView({
   const handleSavePayloadCorrections = async () => {
     try {
       const parsed = JSON.parse(editedPayloadJson)
-      await api.documents.patchExtractedData(claimId, {
-        corrected_payload: parsed,
-        correction_note: "Manual adjuster correction",
-      })
-      setExtractedData(parsed)
+      if (selectedDocId) {
+        await api.documents.patchDocumentExtraction(claimId, selectedDocId, parsed)
+        setDocData(parsed)
+      } else {
+        await api.documents.patchExtractedData(claimId, {
+          corrected_payload: parsed,
+          correction_note: "Manual adjuster correction",
+        })
+        setExtractedData(parsed)
+      }
       setIsEditingPayload(false)
       toast({
         title: "Corrections Saved",
@@ -287,13 +383,22 @@ export function DocumentExtractionView({
 
   return (
     <div className="space-y-6">
+      {role === "patient" && (
+        <Card className="border border-slate-200">
+          <CardContent className="p-8 text-center text-xs text-slate-500">
+            Claim documents are not available for patient accounts.
+          </CardContent>
+        </Card>
+      )}
+
       {/* Upload Box */}
+      {canUpload && (
       <Card className="border border-slate-200 shadow-xs">
         <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50/50">
           <CardTitle className="text-sm font-semibold flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Upload className="w-4 h-4 text-blue-600" />
-              <span>Upload Hospital Bill & Medical Records</span>
+              <span>{isHospital ? "Upload Your Hospital Documents" : "Upload Hospital Bill & Medical Records"}</span>
             </div>
             <span className="text-[11px] font-normal text-slate-500">
               PDF, JPG, PNG up to 50MB
@@ -342,13 +447,15 @@ export function DocumentExtractionView({
           </form>
         </CardContent>
       </Card>
+      )}
 
       {/* Uploaded Documents List */}
+      {role !== "patient" && (
       <Card className="border border-slate-200 shadow-xs">
         <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
           <div className="flex items-center space-x-2">
             <FileText className="w-4 h-4 text-slate-600" />
-            <CardTitle className="text-sm font-semibold">Attached Claim Documents</CardTitle>
+            <CardTitle className="text-sm font-semibold">{isHospital ? "Your Uploaded Documents" : "Attached Claim Documents"}</CardTitle>
           </div>
           <span className="text-xs text-slate-500 font-medium">
             {documents.length} {documents.length === 1 ? "file" : "files"}
@@ -364,7 +471,9 @@ export function DocumentExtractionView({
               {documents.map((doc) => (
                 <div
                   key={doc.id}
-                  className="p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors text-xs"
+                  className={`p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors text-xs ${
+                    selectedDocId === doc.id ? "bg-blue-50/70 ring-1 ring-inset ring-blue-200" : "hover:bg-slate-50/70"
+                  }`}
                 >
                   <div className="flex items-start space-x-3">
                     <div className="p-2 bg-blue-50 text-blue-600 rounded-lg shrink-0 mt-0.5 border border-blue-100">
@@ -397,12 +506,44 @@ export function DocumentExtractionView({
                     <Button
                       size="sm"
                       variant="outline"
+                      onClick={() => handlePreview(doc)}
+                      className="h-7 text-[11px] gap-1.5"
+                    >
+                      <ScanSearch className="w-3 h-3" />
+                      <span>Preview</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant={selectedDocId === doc.id ? "default" : "outline"}
+                      disabled={doc.extraction_status !== "completed"}
+                      onClick={() => handleSelectDocument(doc.id)}
+                      className="h-7 text-[11px] gap-1.5"
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>View Extracted</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
                       disabled={extracting}
                       onClick={() => handleTriggerExtraction(doc.id)}
                       className="h-7 text-[11px] gap-1.5 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
                     >
                       <Sparkles className="w-3 h-3 text-purple-600" />
                       <span>Re-Extract</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDeleteDocument(doc)}
+                      className="h-7 text-[11px] gap-1.5 text-red-600 hover:bg-red-50 hover:border-red-200"
+                      title="Delete document"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Delete</span>
                     </Button>
                   </div>
                 </div>
@@ -411,11 +552,35 @@ export function DocumentExtractionView({
           )}
         </CardContent>
       </Card>
+      )}
+
+      {selectedDoc && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-xs">
+          <span className="text-blue-900">
+            Showing extracted content of <strong>{selectedDoc.original_filename}</strong>
+            {docLoading && " (loading…)"}
+          </span>
+          {isStaff && (
+            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleClearSelection}>
+              Show all documents (merged)
+            </Button>
+          )}
+          {!isStaff && (
+            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleClearSelection}>
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
+
+      {typedSelected && docData && !docLoading && (
+        <TypedExtractionPanel docType={selectedType} data={docData} />
+      )}
 
       {/* Structured Bill Data & Adjudication Trigger */}
-      {hasExtractedData ? (
+      {typedSelected && docData ? null : hasExtractedData ? (
         <div className="space-y-4">
-          {/* Action Callout Banner: "What happens next?" */}
+          {isStaff && !selectedDocId && (
           <div className="p-4 rounded-xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md border border-blue-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
@@ -465,6 +630,7 @@ export function DocumentExtractionView({
               )}
             </div>
           </div>
+          )}
 
           {/* Patient Identity & Integrity Verification Card (Insurance Approver Suite) */}
           <div className={`p-4 rounded-2xl border-2 transition-all shadow-xs ${
@@ -748,7 +914,7 @@ export function DocumentExtractionView({
                         <span>Save Corrections</span>
                       </Button>
                     </div>
-                  ) : (
+                  ) : isStaff ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -758,7 +924,7 @@ export function DocumentExtractionView({
                       <Edit2 className="w-3.5 h-3.5" />
                       <span>Edit Raw Payload</span>
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               )}
             </CardHeader>
@@ -855,12 +1021,57 @@ export function DocumentExtractionView({
             <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 mx-auto flex items-center justify-center">
               <Sparkles className="w-5 h-5" />
             </div>
-            <h4 className="text-xs font-bold text-slate-800">No Structured Bill Data Extracted Yet</h4>
+            <h4 className="text-xs font-bold text-slate-800">
+              {selectedDocId ? "No extracted content for this document" : "No Structured Bill Data Extracted Yet"}
+            </h4>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
               Select an itemized hospital bill PDF or image above and click "Upload &amp; Analyze" to let Gemini multimodal AI parse the charges automatically.
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {previewDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={closePreview} aria-hidden="true" />
+          <div className="relative z-10 w-full max-w-5xl h-[88vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 truncate">{previewDoc.original_filename}</p>
+                <p className="text-[11px] text-slate-500 capitalize">{previewDoc.doc_type?.replaceAll("_", " ")}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {previewUrl && !previewUrl.startsWith("data:") && (
+                  <a href={previewUrl} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5">
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Open in new tab</span>
+                    </Button>
+                  </a>
+                )}
+                <button
+                  onClick={closePreview}
+                  className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  aria-label="Close preview"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-100 overflow-auto flex items-center justify-center">
+              {previewLoading && <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />}
+              {!previewLoading && previewUrl && previewDoc.mime_type?.startsWith("image/") && (
+                <img src={previewUrl} alt={previewDoc.original_filename} className="max-w-full max-h-full object-contain" />
+              )}
+              {!previewLoading && previewUrl && !previewDoc.mime_type?.startsWith("image/") && (
+                <iframe src={previewUrl} title={previewDoc.original_filename} className="w-full h-full border-0" />
+              )}
+              {!previewLoading && !previewUrl && (
+                <p className="text-xs text-slate-500">Preview unavailable for this document.</p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

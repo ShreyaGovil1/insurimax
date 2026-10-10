@@ -212,6 +212,8 @@ async def get_queue(
     include_auto_approved: bool = True,
     include_finalized: bool = False,
     status_filter: ClaimStatus | None = None,
+    hospital_org_id: uuid.UUID | None = None,
+    insurer_org_id: uuid.UUID | None = None,
 ) -> list[Claim]:
     """
     Returns claims sorted by SLA urgency.
@@ -229,6 +231,11 @@ async def get_queue(
         if not include_auto_approved:
             excluded.append(ClaimStatus.AUTO_APPROVED)
         query = query.where(Claim.status.not_in(excluded))
+
+    if hospital_org_id:
+        query = query.where(Claim.hospital_org_id == hospital_org_id)
+    if insurer_org_id:
+        query = query.where(Claim.insurer_org_id == insurer_org_id)
 
     if unassigned_only:
         query = query.where(Claim.assigned_adjuster_id == None)  # noqa: E711

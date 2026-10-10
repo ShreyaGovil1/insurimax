@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gcp import storage as gcs
 from app.gcp.gemini import (
-    EXTRACTION_SYSTEM_PROMPT,
+    CLASSIFY_PROMPT,
+    get_extraction_prompt,
     generate_json,
 )
+from app.models.user import User
 from app.models.document import Document, DocumentType, ExtractionJob, ExtractionStatus
 from app.core.config import settings
 
@@ -68,6 +70,19 @@ async def delete_document(db: AsyncSession, doc_id: uuid.UUID) -> bool:
     return True
 
 
+async def _detect_document_type(inline_data: list[dict]) -> DocumentType | None:
+    """Ask Gemini what the document actually is; None if unsure or on any failure."""
+    try:
+        result, _, _ = await generate_json(
+            prompt=CLASSIFY_PROMPT, inline_data=inline_data, model_name=settings.GEMINI_MODEL
+        )
+        if isinstance(result, dict) and float(result.get("confidence") or 0) >= 0.7:
+            return DocumentType(result.get("document_type"))
+    except Exception:
+        pass
+    return None
+
+
 async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJob:
     """
     Create an extraction job and run it immediately (async within the request).
@@ -93,11 +108,17 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
 
         # Build multimodal payload
         inline_data = [{"mime_type": doc.mime_type, "data": file_bytes}]
+
+        # Guard against a wrongly chosen upload type (e.g. a policy uploaded as "itemized bill")
+        detected = await _detect_document_type(inline_data)
+        if detected and detected != doc.doc_type:
+            doc.doc_type = detected
         prompt = (
-            f"{EXTRACTION_SYSTEM_PROMPT}\n\n"
+            f"{get_extraction_prompt(doc.doc_type.value)}\n\n"
             f"Document type: {doc.doc_type.value}\n"
             f"Original filename: {doc.original_filename}\n\n"
-            "Extract all structured data from the attached document."
+            f"Extract all structured data from the attached {doc.doc_type.value.replace('_', ' ')} "
+            "following the schema for that document type."
         )
 
         extracted, prompt_tokens, completion_tokens = await generate_json(
@@ -108,6 +129,8 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
 
         # Persist results
         job.status = ExtractionStatus.COMPLETED
+        if isinstance(extracted, dict):
+            extracted["document_type"] = doc.doc_type.value
         job.extracted_payload = extracted
         job.gemini_model_used = settings.GEMINI_MODEL
         job.prompt_tokens = prompt_tokens
@@ -133,23 +156,52 @@ async def get_extraction_job(db: AsyncSession, job_id: uuid.UUID) -> ExtractionJ
     return result.scalar_one_or_none()
 
 
+# Document types that describe the hospital stay and feed claim-level adjudication data.
+# Policy documents and "other" files are excluded so that e.g. an insurer's name never
+# overwrites the hospital on the bill. Lower index = lower priority; bills win.
+_CLAIM_MERGE_PRIORITY = [
+    DocumentType.CONSULTATION_NOTES,
+    DocumentType.LAB_REPORT,
+    DocumentType.PRESCRIPTION,
+    DocumentType.DISCHARGE_SUMMARY,
+    DocumentType.ITEMIZED_BILL,
+]
+
+
+def _deep_merge(base: dict, new: dict) -> dict:
+    """Merge `new` into `base`, ignoring null/empty values so they never erase real data."""
+    for key, value in new.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 async def get_claim_extracted_data(db: AsyncSession, claim_id: uuid.UUID) -> dict:
-    """Merge extracted payloads from all completed jobs for a claim."""
+    """Merge extracted payloads of the claim's hospital documents (never policy/other documents)."""
     result = await db.execute(
-        select(ExtractionJob)
+        select(ExtractionJob, Document.doc_type)
+        .join(Document, Document.id == ExtractionJob.document_id)
         .where(
             ExtractionJob.claim_id == claim_id,
             ExtractionJob.status == ExtractionStatus.COMPLETED,
+            Document.doc_type.in_(_CLAIM_MERGE_PRIORITY),
         )
-        .order_by(ExtractionJob.completed_at.desc())
+        .order_by(ExtractionJob.completed_at)  # oldest first, newest overrides within a type
     )
-    jobs = result.scalars().all()
+    rows = result.all()
 
     merged: dict = {}
-    for job in reversed(jobs):  # oldest first so newest overrides
-        payload = job.corrected_payload or job.extracted_payload or {}
-        if isinstance(payload, dict):
-            merged.update(payload)
+    for doc_type in _CLAIM_MERGE_PRIORITY:
+        for job, row_type in rows:
+            if row_type != doc_type:
+                continue
+            payload = job.corrected_payload or job.extracted_payload or {}
+            if isinstance(payload, dict):
+                _deep_merge(merged, {k: v for k, v in payload.items() if k != "document_type"})
 
     return merged
 
@@ -160,9 +212,11 @@ async def patch_extracted_data(
     """Apply manual corrections to the most recent completed extraction job."""
     result = await db.execute(
         select(ExtractionJob)
+        .join(Document, Document.id == ExtractionJob.document_id)
         .where(
             ExtractionJob.claim_id == claim_id,
             ExtractionJob.status == ExtractionStatus.COMPLETED,
+            Document.doc_type.in_(_CLAIM_MERGE_PRIORITY),
         )
         .order_by(ExtractionJob.completed_at.desc())
         .limit(1)
@@ -188,3 +242,31 @@ async def generate_signed_url_for_document(
     signed_url = await gcs.generate_signed_url(doc.gcs_object_key, expiry_minutes)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
     return signed_url, expires_at
+
+
+async def is_document_owned_by(db: AsyncSession, doc: Document, user: User) -> bool:
+    """True if the document was uploaded by the user, or by someone in the user's organisation."""
+    if doc.uploaded_by_id is None:
+        return False
+    if doc.uploaded_by_id == user.id:
+        return True
+    if user.org_id is None:
+        return False
+    uploader = (
+        await db.execute(select(User).where(User.id == doc.uploaded_by_id))
+    ).scalar_one_or_none()
+    return bool(uploader and uploader.org_id == user.org_id)
+
+
+async def get_document_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJob | None:
+    """Most recent completed extraction job for a single document."""
+    result = await db.execute(
+        select(ExtractionJob)
+        .where(
+            ExtractionJob.document_id == doc_id,
+            ExtractionJob.status == ExtractionStatus.COMPLETED,
+        )
+        .order_by(ExtractionJob.completed_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()

@@ -18,9 +18,10 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
+from app.core.access import STAFF_ROLES, insurer_scope, require_claim_access
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
-from app.models.user import UserRole
+from app.models.user import OrgType, UserRole
 from app.schemas.claim import (
     ClaimAggregateSummary,
     ClaimCreate,
@@ -30,7 +31,7 @@ from app.schemas.claim import (
     SLAStatus,
 )
 from app.schemas.common import MessageResponse, PaginatedResponse
-from app.services import claim_service
+from app.services import claim_service, user_service
 
 router = APIRouter(prefix="/claims", tags=["Claims"])
 
@@ -39,15 +40,59 @@ router = APIRouter(prefix="/claims", tags=["Claims"])
 async def create_claim(
     body: ClaimCreate,
     db: DBSession,
-    current_user: AdjusterOrAbove,
+    current_user: CurrentUser,
     background_tasks: BackgroundTasks,
 ):
     """
     Create a new claim. SLA deadline is set to now + 3 hours (IRDAI rule).
     The claim lands in SUBMITTED status; document uploads follow separately.
+    Hospital desk only; the claim is stamped with the creator's hospital organization.
     """
+    if current_user.role != UserRole.HOSPITAL_DESK:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="Only hospital desk users can create claims"
+        )
+    org = (
+        await user_service.get_organization(db, current_user.org_id)
+        if current_user.org_id
+        else None
+    )
+    if org is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Your account is not linked to a hospital organization",
+        )
+    insurer = (
+        await user_service.get_organization(db, body.insurer_org_id) if body.insurer_org_id else None
+    )
+    if insurer is None or insurer.org_type != OrgType.INSURER or not insurer.is_active:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select a valid insurer for this claim"
+        )
+    # The claim always belongs to the creator's hospital; the client cannot choose it.
+    body = body.model_copy(
+        update={
+            "hospital_org_id": org.id,
+            "hospital_name": org.name,
+            "insurer_name": insurer.name,
+        }
+    )
+
     claim = await claim_service.create_claim(db, body, current_user.id)
     return claim
+
+
+@router.get("/insurers")
+async def list_insurers(db: DBSession, current_user: CurrentUser):
+    """Active insurer organizations a claim can be filed against."""
+    if current_user.role == UserRole.PATIENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not allowed")
+    orgs = await user_service.list_organizations(db)
+    return [
+        {"id": str(o.id), "name": o.name}
+        for o in orgs
+        if o.org_type == OrgType.INSURER and o.is_active
+    ]
 
 
 @router.get("", response_model=PaginatedResponse[ClaimSummary])
@@ -67,11 +112,19 @@ async def list_claims(
     adjuster_filter = None
     if current_user.role == UserRole.ADJUSTER:
         adjuster_filter = current_user.id
+    if current_user.role == UserRole.HOSPITAL_DESK:
+        if current_user.org_id is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not linked to a hospital organization")
+        hospital_org_id = current_user.org_id  # ignore any client-supplied filter
+    elif current_user.role not in STAFF_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not allowed to list claims")
+    insurer_org_id = await insurer_scope(db, current_user)
 
     claims, total = await claim_service.list_claims(
         db,
         status=claim_status,
         hospital_org_id=hospital_org_id,
+        insurer_org_id=insurer_org_id,
         assigned_adjuster_id=adjuster_filter,
         sla_remaining_lt_minutes=sla_remaining_lt_minutes,
         page=page,
@@ -117,10 +170,7 @@ async def list_claims(
 
 @router.get("/{claim_id}", response_model=ClaimRead)
 async def get_claim(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
-    claim = await claim_service.get_claim(db, claim_id)
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
-    return claim
+    return await require_claim_access(db, claim_id, current_user)
 
 
 @router.patch("/{claim_id}/status", response_model=ClaimRead)
@@ -131,6 +181,7 @@ async def update_claim_status(
     current_user: AdjusterOrAbove,
 ):
     """Transition a claim to a new status (with audit history)."""
+    await require_claim_access(db, claim_id, current_user)
     claim = await claim_service.update_claim_status(db, claim_id, body, current_user.id)
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
@@ -160,6 +211,7 @@ async def get_claim_sla(claim_id: uuid.UUID, db: DBSession, current_user: Curren
     Real-time SLA status for a claim.
     breach_risk=True means < 30 minutes remaining.
     """
+    await require_claim_access(db, claim_id, current_user)
     sla = await claim_service.get_sla_status(db, claim_id)
     if not sla:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
@@ -171,6 +223,7 @@ async def get_claim_summary(claim_id: uuid.UUID, db: DBSession, current_user: Cu
     """
     Phase 4 summary bar: billed → approved → deducted breakdown.
     """
+    await require_claim_access(db, claim_id, current_user)
     summary = await claim_service.get_claim_aggregate_summary(db, claim_id)
     if not summary:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
@@ -188,9 +241,7 @@ async def get_audit_report(claim_id: uuid.UUID, db: DBSession, current_user: Cur
     from app.models.claim import Claim
     from app.models.adjudication import AdjudicationResult
 
-    claim = await claim_service.get_claim(db, claim_id)
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    claim = await require_claim_access(db, claim_id, current_user)
 
     adj_result = await db.execute(
         select(AdjudicationResult)

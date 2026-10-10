@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Circle,
   UserCheck,
+  Settings,
 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
@@ -28,6 +29,8 @@ const NAV_ITEMS = [
   { id: "policies", path: "/policies", label: "Policies", icon: ShieldCheck },
   { id: "analytics", path: "/analytics", label: "Analytics & Audit", icon: Activity },
 ]
+
+const ADMIN_NAV_ITEM = { id: "admin", path: "/admin", label: "Admin", icon: Settings }
 
 const ROLE_OPTIONS = [
   { key: "adjuster", label: "TPA Adjuster", short: "Adjuster" },
@@ -47,6 +50,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
     navigate = useNavigate()
   } catch {}
 
+  const navItems = user?.role === "admin" ? [ADMIN_NAV_ITEM, ...NAV_ITEMS] : NAV_ITEMS
   const currentRoleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
 
   const handleNavigate = (item) => {
@@ -55,8 +59,9 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
   }
 
   const handleBrandClick = () => {
-    if (onViewChange) onViewChange("queue")
-    if (navigate) navigate("/queue")
+    const home = user?.role === "admin" ? "/admin" : "/queue"
+    if (onViewChange) onViewChange(home.slice(1))
+    if (navigate) navigate(home)
   }
 
   const handleLogout = async () => {
@@ -97,7 +102,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
 
         {/* Center Pill Navigation (Ronas IT style) */}
         <nav className="hidden md:flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/60">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon
             const isActive = isItemActive(item)
             return (
@@ -120,14 +125,17 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
         {/* Right Section: Actions, Role Pill & User */}
         <div className="flex items-center space-x-2 sm:space-x-3">
           {/* New Claim Pill Button */}
+          {user?.role === "hospital_desk" && (
           <Button
             size="sm"
+            data-action="new-claim"
             onClick={onNewClaim}
             className="rounded-full bg-slate-950 hover:bg-slate-800 text-white font-semibold text-xs h-8.5 px-3.5 gap-1.5 shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
             <span className="hidden sm:inline">New Claim</span>
           </Button>
+          )}
 
           {/* Interactive Role Switcher Pill */}
           <div className="relative">
@@ -189,7 +197,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
 
       {/* Mobile view sub-navbar */}
       <div className="md:hidden flex items-center space-x-1 overflow-x-auto py-2 px-1">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isActive = isItemActive(item)
           return (
             <button

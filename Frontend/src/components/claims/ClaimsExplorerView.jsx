@@ -1,3 +1,4 @@
+import { useAuth } from "../../context/AuthContext"
 import React, { useState, useEffect } from "react"
 import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers } from "lucide-react"
 import { useNavigate } from "react-router-dom"
@@ -19,6 +20,7 @@ const STATUS_FILTERS = [
 ]
 
 export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
+  const { user } = useAuth()
   let navigate = () => {}
   try {
     navigate = useNavigate()
@@ -84,6 +86,7 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
             <span>Refresh</span>
           </Button>
 
+          {user?.role === "hospital_desk" && (
           <Button
             size="sm"
             onClick={onNewClaim}
@@ -92,6 +95,7 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
             <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
             <span>New Claim</span>
           </Button>
+          )}
         </div>
       </div>
 

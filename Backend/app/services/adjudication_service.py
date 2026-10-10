@@ -281,7 +281,15 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         await db.flush()
         raise
 
-    return adj
+    # line_items is lazy="raise": reload with the relationship eagerly loaded so the
+    # response model (AdjudicationResultRead.line_items) can serialize it.
+    refreshed = await db.execute(
+        select(AdjudicationResult)
+        .where(AdjudicationResult.id == adj.id)
+        .options(selectinload(AdjudicationResult.line_items))
+        .execution_options(populate_existing=True)
+    )
+    return refreshed.scalar_one()
 
 
 async def get_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> AdjudicationResult | None:

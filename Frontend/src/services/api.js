@@ -66,6 +66,11 @@ async function apiRequest(endpoint, options = {}) {
       } catch {
         errorData = { detail: res.statusText }
       }
+      // Expired / revoked session (e.g. user deactivated): drop credentials and tell the app
+      if (res.status === 401 && token && !endpoint.startsWith("/auth/login")) {
+        clearTokens()
+        if (typeof window !== "undefined") window.dispatchEvent(new Event("auth:expired"))
+      }
       const err = new Error(errorData?.detail || `Request failed with status ${res.status}`)
       err.status = res.status
       err.data = errorData
@@ -89,7 +94,7 @@ export const DEMO_CREDENTIALS = {
     name: "Priya Sharma",
   },
   senior_adjuster: {
-    email: "senior@insurimax.com",
+    email: "senior.adjuster@insurimax.com",
     password: "Password@123",
     role: "senior_adjuster",
     name: "Rajesh Patel (Lead Adjuster)",
@@ -178,6 +183,57 @@ export const api = {
     },
   },
 
+  // Admin panel (admin role only)
+  admin: {
+    async getStats() {
+      return await apiRequest("/admin/stats")
+    },
+
+    async listUsers({ search, role, is_active, skip = 0, limit = 50 } = {}) {
+      const params = new URLSearchParams({ skip, limit })
+      if (search) params.set("search", search)
+      if (role) params.set("role", role)
+      if (is_active !== undefined && is_active !== "") params.set("is_active", is_active)
+      return await apiRequest(`/admin/users?${params.toString()}`)
+    },
+
+    async createUser(data) {
+      return await apiRequest("/admin/users", { method: "POST", body: JSON.stringify(data) })
+    },
+
+    async updateUser(userId, data) {
+      return await apiRequest(`/admin/users/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      })
+    },
+
+    async resetPassword(userId, password) {
+      return await apiRequest(`/admin/users/${userId}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      })
+    },
+
+    async listOrganizations() {
+      return await apiRequest("/admin/organizations")
+    },
+
+    async updateOrganization(orgId, data) {
+      return await apiRequest(`/admin/organizations/${orgId}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      })
+    },
+
+    async createOrganization(data) {
+      return await apiRequest("/admin/organizations", {
+        method: "POST",
+        body: JSON.stringify(data),
+      })
+    },
+  },
+
   // Queue
   queue: {
     async getQueue() {
@@ -227,6 +283,10 @@ export const api = {
 
     async getById(claimId) {
       return await apiRequest(`/claims/${claimId}`)
+    },
+
+    async listInsurers() {
+      return await apiRequest("/claims/insurers")
     },
 
     async create(claimData) {
@@ -298,6 +358,17 @@ export const api = {
     async getExtractedData(claimId) {
       const res = await apiRequest(`/claims/${claimId}/extracted-data`)
       return res?.extracted_data || res
+    },
+
+    async getDocumentExtraction(claimId, docId) {
+      return await apiRequest(`/claims/${claimId}/documents/${docId}/extracted-data`)
+    },
+
+    async patchDocumentExtraction(claimId, docId, payload) {
+      return await apiRequest(`/claims/${claimId}/documents/${docId}/extracted-data`, {
+        method: "PATCH",
+        body: JSON.stringify({ corrected_payload: payload }),
+      })
     },
 
     async patchExtractedData(claimId, patchPayload) {

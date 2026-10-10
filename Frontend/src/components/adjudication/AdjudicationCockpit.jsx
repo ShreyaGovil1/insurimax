@@ -57,7 +57,19 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
     }
   }
 
-  const [activeTab, setActiveTab] = useState("adjudication") // "adjudication" | "documents" | "queries"
+  // Tabs live in the URL (/claims/:claimId[/documents|/queries]); local state is only a
+  // fallback when the cockpit is rendered outside the router (e.g. standalone tests).
+  const TABS = ["adjudication", "documents", "queries"]
+  const [localTab, setLocalTab] = useState("adjudication")
+  const routed = Boolean(params.claimId)
+  const activeTab = routed ? (TABS.includes(params.tab) ? params.tab : "adjudication") : localTab
+  const setActiveTab = (tab) => {
+    if (!routed) {
+      setLocalTab(tab)
+    } else if (navigate) {
+      navigate(tab === "adjudication" ? `/claims/${params.claimId}` : `/claims/${params.claimId}/${tab}`)
+    }
+  }
   const [claim, setClaim] = useState(null)
   const [adjudication, setAdjudication] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)
@@ -86,12 +98,25 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
 
   const loadClaimData = async () => {
     setLoading(true)
-    try {
-      const [claimData, adjData] = await Promise.all([
-        api.claims.getById(claimId),
-        api.adjudication.get(claimId),
-      ])
-      setClaim(claimData)
+    // Independent requests: a claim can exist before adjudication has been run (adjudication 404s),
+    // so one failure must not discard the other result.
+    const [claimRes, adjRes] = await Promise.allSettled([
+      api.claims.getById(claimId),
+      api.adjudication.get(claimId),
+    ])
+
+    if (claimRes.status === "fulfilled") {
+      setClaim(claimRes.value)
+    } else {
+      toast({
+        title: "Could not load claim",
+        description: claimRes.reason?.message || "Viewing claim in offline/cached mode",
+        variant: "destructive",
+      })
+    }
+
+    if (adjRes.status === "fulfilled") {
+      const adjData = adjRes.value
       setAdjudication(adjData)
 
       // Auto-select first line item if none selected
@@ -99,15 +124,19 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
         setSelectedItemId(adjData.line_items[0].id)
         loadExplanation(adjData.line_items[0].id)
       }
-    } catch (err) {
-      toast({
-        title: "Notice",
-        description: "Viewing claim in offline/cached mode",
-        variant: "default",
-      })
-    } finally {
-      setLoading(false)
+    } else {
+      // Not adjudicated yet is an expected state, not an error
+      setAdjudication(null)
+      if (adjRes.reason?.status !== 404) {
+        toast({
+          title: "Could not load adjudication",
+          description: adjRes.reason?.message || "Adjudication data is unavailable",
+          variant: "destructive",
+        })
+      }
     }
+
+    setLoading(false)
   }
 
   const loadExplanation = async (itemId) => {

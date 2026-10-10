@@ -17,6 +17,7 @@ import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
 import { formatCurrencyINR } from "../../lib/utils"
+import { Select } from "../ui/select"
 import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card"
 import { Badge } from "../ui/badge"
@@ -289,53 +290,19 @@ export function AdjusterQueueView({ onSelectClaim }) {
             </div>
           </div>
 
-          {/* Secondary Status Filter Pills (Submitted, Auto-Approved, In Review, Mismatch) */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
-            <button
-              onClick={() => setStatusFilter("all")}
-              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                statusFilter === "all"
-                  ? "bg-slate-900 text-white font-bold"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
+          {/* Status filter dropdown */}
+          <div className="pt-1">
+            <Select
+              aria-label="Filter cases"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full sm:w-72 rounded-full h-8 text-xs font-semibold bg-slate-50 border-slate-200 cursor-pointer"
             >
-              All Cases ({displayedList.length})
-            </button>
-
-            <button
-              onClick={() => setStatusFilter("in_review")}
-              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                statusFilter === "in_review"
-                  ? "bg-blue-600 text-white font-bold"
-                  : "bg-blue-50 text-blue-700 hover:bg-blue-100"
-              }`}
-            >
-              In Review / Submitted ({inReviewCount})
-            </button>
-
-            <button
-              onClick={() => setStatusFilter("auto_approved")}
-              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
-                statusFilter === "auto_approved"
-                  ? "bg-emerald-600 text-white font-bold"
-                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-              }`}
-            >
-              <CheckCircle2 className="w-3 h-3" />
-              <span>Auto-Approved ({autoApprovedCount})</span>
-            </button>
-
-            <button
-              onClick={() => setStatusFilter("mismatch")}
-              className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
-                statusFilter === "mismatch"
-                  ? "bg-rose-600 text-white font-bold"
-                  : "bg-rose-50 text-rose-700 hover:bg-rose-100"
-              }`}
-            >
-              <AlertTriangle className="w-3 h-3" />
-              <span>Identity Mismatch / Flagged ({mismatchCount})</span>
-            </button>
+              <option value="all">All Cases ({displayedList.length})</option>
+              <option value="in_review">In Review / Submitted ({inReviewCount})</option>
+              <option value="auto_approved">Auto-Approved ({autoApprovedCount})</option>
+              <option value="mismatch">Identity Mismatch / Flagged ({mismatchCount})</option>
+            </Select>
           </div>
         </CardHeader>
 

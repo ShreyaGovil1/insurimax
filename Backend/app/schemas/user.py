@@ -41,6 +41,13 @@ class OrganizationUpdate(BaseSchema):
     auto_approval_max_amount_inr: float | None = Field(None, ge=0.0)
 
 
+class AdminOrganizationUpdate(BaseSchema):
+    """Admin-only update of an organisation, including its type."""
+    name: str | None = Field(None, min_length=2, max_length=255)
+    org_type: OrgType | None = None
+    is_active: bool | None = None
+
+
 # ── User ──────────────────────────────────────────────────────────────────────
 
 class UserCreate(BaseSchema):
@@ -77,6 +84,39 @@ class UserUpdate(BaseSchema):
     full_name: str | None = None
     role: UserRole | None = None
     is_active: bool | None = None
+
+
+class AdminUserUpdate(BaseSchema):
+    """Admin-only partial update of any user."""
+    full_name: str | None = Field(None, min_length=2, max_length=255)
+    role: UserRole | None = None
+    is_active: bool | None = None
+    is_verified: bool | None = None
+    org_id: uuid.UUID | None = None
+
+
+class AdminPasswordReset(BaseSchema):
+    password: str = Field(..., min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be 72 bytes or fewer (bcrypt limit).")
+        return v
+
+
+class UserListResponse(BaseSchema):
+    items: list[UserRead]
+    total: int
+
+
+class AdminStats(BaseSchema):
+    total_users: int
+    active_users: int
+    inactive_users: int
+    users_by_role: dict[str, int]
+    total_organizations: int
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

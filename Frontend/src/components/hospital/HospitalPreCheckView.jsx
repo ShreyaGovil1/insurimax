@@ -128,10 +128,19 @@ export function HospitalPreCheckView({ onClaimCreated }) {
 
   const handleConvertToFormalClaim = async () => {
     try {
+      const insurers = await api.claims.listInsurers()
+      const insurer = insurers.find((i) => i.name.toLowerCase() === (form.insurer_name || "").toLowerCase())
+      if (!insurer) {
+        toast({
+          title: "Insurer not registered",
+          description: `"${form.insurer_name}" is not an insurer on the platform. Ask an admin to add it.`,
+          variant: "destructive",
+        })
+        return
+      }
       const newClaim = await api.claims.create({
         patient_name: form.patient_name,
-        hospital_name: form.hospital_name,
-        insurer_name: form.insurer_name,
+        insurer_org_id: insurer.id,
         policy_number: form.policy_number,
         billed_amount: parseFloat(form.billed_amount) || null,
         adjuster_notes: "Converted from hospital pre-submission audit check " + preCheckResult?.check_id,

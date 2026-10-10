@@ -14,9 +14,10 @@ class ClaimCreate(BaseSchema):
     patient_name: str = Field(..., min_length=2, max_length=255)
     patient_dob: datetime | None = None
     patient_phone: str | None = None
-    hospital_name: str = Field(..., min_length=2, max_length=255)
+    hospital_name: str | None = Field(None, max_length=255)  # set server-side from the creator's organization
     hospital_org_id: uuid.UUID | None = None
     insurer_name: str | None = None
+    insurer_org_id: uuid.UUID | None = None
     tpa_org_id: uuid.UUID | None = None
     policy_number: str | None = None
     uhid: str | None = None
@@ -32,6 +33,7 @@ class ClaimRead(BaseSchema):
     patient_dob: datetime | None
     hospital_name: str
     insurer_name: str | None
+    insurer_org_id: uuid.UUID | None = None
     policy_number: str | None
     billed_amount: float | None
     approved_amount: float | None
