@@ -37,7 +37,6 @@ async def get_patient_claim_status(
         "extraction_in_progress": "Your claim documents are being processed.",
         "adjudication_in_progress": "Your claim is being evaluated.",
         "queried": "We have sent a query to your hospital for clarification.",
-        "escalated": "Your claim has been referred to a senior reviewer.",
         "auto_approved": "Your claim has been approved.",
         "approved": "Your claim has been approved.",
         "partially_approved": "Your claim has been partially approved.",
@@ -52,7 +51,7 @@ async def get_patient_claim_status(
             claim.status.value, "Your claim is being processed."
         ),
         "approved_amount_inr": claim.approved_amount,
-        "submitted_at": claim.submitted_at.isoformat(),
+        "submitted_at": claim.submitted_at.isoformat() if claim.submitted_at else None,
         "last_updated": claim.updated_at.isoformat(),
         # Deliberately omit: patient_name, policy_number, hospital details, adjudication breakdown
     }

@@ -93,12 +93,6 @@ export const DEMO_CREDENTIALS = {
     role: "adjuster",
     name: "Priya Sharma",
   },
-  senior_adjuster: {
-    email: "senior.adjuster@insurimax.com",
-    password: "Password@123",
-    role: "senior_adjuster",
-    name: "Rajesh Patel (Lead Adjuster)",
-  },
   admin: {
     email: "admin@insurimax.com",
     password: "Password@123",
@@ -250,12 +244,6 @@ export const api = {
       })
     },
 
-    async escalateClaim(claimId, reason) {
-      const query = reason ? `?reason=${encodeURIComponent(reason)}` : ""
-      return await apiRequest(`/queue/${claimId}/escalate${query}`, {
-        method: "POST",
-      })
-    },
 
     async getAdjusterDailyDigest(adjusterId, date) {
       const query = date ? `?date=${date}` : ""
@@ -296,11 +284,20 @@ export const api = {
       })
     },
 
+    async submit(claimId) {
+      return await apiRequest(`/claims/${claimId}/submit`, { method: "POST" })
+    },
+
     async updateStatus(claimId, status, note = null) {
       return await apiRequest(`/claims/${claimId}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status, note }),
       })
+    },
+
+    // Hospital desk: permanently deletes a draft claim (same endpoint admins use to void)
+    async delete(claimId) {
+      return await apiRequest(`/claims/${claimId}`, { method: "DELETE" })
     },
 
     async void(claimId) {
@@ -381,8 +378,9 @@ export const api = {
 
   // Adjudication Engine
   adjudication: {
-    async run(claimId) {
-      return await apiRequest(`/claims/${claimId}/adjudicate`, {
+    async run(claimId, { confirmDiscardOverrides = false } = {}) {
+      const qs = confirmDiscardOverrides ? "?confirm_discard_overrides=true" : ""
+      return await apiRequest(`/claims/${claimId}/adjudicate${qs}`, {
         method: "POST",
       })
     },

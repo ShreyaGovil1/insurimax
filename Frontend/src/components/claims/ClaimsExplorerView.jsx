@@ -1,6 +1,6 @@
 import { useAuth } from "../../context/AuthContext"
 import React, { useState, useEffect } from "react"
-import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers } from "lucide-react"
+import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
@@ -9,13 +9,14 @@ import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
+import { useToast } from "../ui/toast"
 
 const STATUS_FILTERS = [
   { key: "all", label: "All Claims" },
   { key: "submitted", label: "Submitted" },
   { key: "in_review", label: "In Review" },
   { key: "auto_approved", label: "Auto-Approved" },
-  { key: "escalated", label: "Escalated" },
   { key: "finalized", label: "Finalized" },
 ]
 
@@ -34,6 +35,26 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState("all")
   const [searchQuery, setSearchQuery] = useState("")
+  const { toast } = useToast()
+  const isHospital = user?.role === "hospital_desk"
+  // Draft pending deletion (hospital only); drives the confirmation dialog
+  const [claimToDelete, setClaimToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleDeleteDraft = async () => {
+    if (!claimToDelete) return
+    setDeleting(true)
+    try {
+      await api.claims.delete(claimToDelete.id)
+      toast({ title: "Draft Deleted", description: `${claimToDelete.claim_number} and its documents were deleted.`, variant: "success" })
+      setClaimToDelete(null)
+      loadClaims()
+    } catch (err) {
+      toast({ title: "Delete Failed", description: err.message, variant: "destructive" })
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const loadClaims = async () => {
     setLoading(true)
@@ -104,7 +125,10 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
         
         {/* Status Pills */}
         <div className="flex items-center space-x-1 overflow-x-auto pb-1 md:pb-0">
-          {STATUS_FILTERS.map((f) => (
+          {(user?.role === "hospital_desk"
+            ? [STATUS_FILTERS[0], { key: "draft", label: "Drafts" }, ...STATUS_FILTERS.slice(1)]
+            : STATUS_FILTERS
+          ).map((f) => (
             <button
               key={f.key}
               onClick={() => setStatusFilter(f.key)}
@@ -184,10 +208,14 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
                       </td>
 
                       <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        <SLAUrgencyBadge
-                          slaDeadline={c.sla_deadline}
-                          isBreached={c.sla_breached}
-                        />
+                        {c.status === "draft" ? (
+                          <span className="text-[11px] text-slate-500">Starts on submission</span>
+                        ) : (
+                          <SLAUrgencyBadge
+                            slaDeadline={c.sla_deadline}
+                            isBreached={c.sla_breached}
+                          />
+                        )}
                       </td>
 
                       <td className="py-3 px-4">
@@ -195,27 +223,38 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
                           variant={
                             c.status === "auto_approved" || c.status === "approved"
                               ? "lime"
-                              : c.status === "escalated"
-                              ? "destructive"
-                              : c.status === "queried"
+                              : c.status === "queried" || c.status === "draft"
                               ? "warning"
                               : "secondary"
                           }
                           className="capitalize text-[10px] font-bold"
                         >
-                          {c.status?.replace("_", " ")}
+                          {c.status?.replaceAll("_", " ")}
                         </Badge>
                       </td>
 
                       <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          size="sm"
-                          onClick={() => handleSelect(c.id)}
-                          className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
-                        >
-                          <span>Open</span>
-                          <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
-                        </Button>
+                        <div className="flex items-center justify-end space-x-1.5">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSelect(c.id)}
+                            className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
+                          >
+                            <span>Open</span>
+                            <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
+                          </Button>
+                          {isHospital && c.status === "draft" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setClaimToDelete(c)}
+                              className="rounded-full h-7.5 w-7.5 p-0 text-slate-400 hover:text-red-700 hover:bg-red-50"
+                              title="Delete draft"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -225,6 +264,30 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete draft confirmation */}
+      <Dialog open={Boolean(claimToDelete)} onOpenChange={(open) => !open && setClaimToDelete(null)}>
+        <DialogContent onClose={() => setClaimToDelete(null)}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-red-600" />
+              <span>Delete draft {claimToDelete?.claim_number}?</span>
+            </DialogTitle>
+            <DialogDescription>
+              The draft for {claimToDelete?.patient_name} and every document attached to it are permanently deleted. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClaimToDelete(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleDeleteDraft} disabled={deleting} className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{deleting ? "Deleting..." : "Delete Draft"}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

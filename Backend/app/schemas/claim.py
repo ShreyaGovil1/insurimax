@@ -44,7 +44,7 @@ class ClaimRead(BaseSchema):
     sla_breached: bool
     ai_confidence_score: float | None
     deduction_summary: dict | None
-    submitted_at: datetime
+    submitted_at: datetime | None
     finalized_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -63,7 +63,7 @@ class ClaimSummary(BaseSchema):
     flagged_items_count: int | None = None
     sla_deadline: datetime | None
     sla_breached: bool
-    submitted_at: datetime
+    submitted_at: datetime | None
     has_identity_mismatch: bool = False
 
 

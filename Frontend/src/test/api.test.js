@@ -27,7 +27,7 @@ describe("API Client & Services", () => {
 
   it("contains valid persona credentials for seed testing", () => {
     expect(DEMO_CREDENTIALS.adjuster.email).toBe("adjuster@insurimax.com")
-    expect(DEMO_CREDENTIALS.senior_adjuster.role).toBe("senior_adjuster")
+    expect(DEMO_CREDENTIALS.senior_adjuster).toBeUndefined()
     expect(DEMO_CREDENTIALS.admin.role).toBe("admin")
     expect(DEMO_CREDENTIALS.hospital_desk.role).toBe("hospital_desk")
   })
@@ -193,11 +193,11 @@ describe("API Client & Services", () => {
     vi.spyOn(global, "fetch").mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ id: "u-1", role: "senior_adjuster" }),
+      json: async () => ({ id: "u-1", role: "admin" }),
     })
 
-    const updated = await api.users.updateRole("u-1", "senior_adjuster")
-    expect(updated.role).toBe("senior_adjuster")
+    const updated = await api.users.updateRole("u-1", "admin")
+    expect(updated.role).toBe("admin")
   })
 
   it("allows admin to void a claim", async () => {

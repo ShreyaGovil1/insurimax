@@ -5,7 +5,8 @@ POST   /claims
 GET    /claims
 GET    /claims/{claimId}
 PATCH  /claims/{claimId}/status
-DELETE /claims/{claimId}
+POST   /claims/{claimId}/submit
+DELETE /claims/{claimId}          (hospital: delete draft; admin: void)
 GET    /claims/{claimId}/sla
 GET    /claims/{claimId}/summary
 GET    /claims/{claimId}/audit-report
@@ -18,7 +19,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
-from app.core.access import STAFF_ROLES, insurer_scope, require_claim_access
+from app.core.access import STAFF_ROLES, insurer_scope, require_claim_access, require_hospital_desk
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
 from app.models.user import OrgType, UserRole
@@ -35,6 +36,11 @@ from app.services import claim_service, user_service
 
 router = APIRouter(prefix="/claims", tags=["Claims"])
 
+# Statuses only the hospital moves a claim through (create -> draft, submit -> submitted).
+_HOSPITAL_OWNED_STATUSES = (ClaimStatus.DRAFT, ClaimStatus.SUBMITTED)
+# Retired statuses: kept in the enum for old history rows, never set again.
+_RETIRED_STATUSES = (ClaimStatus.ESCALATED, ClaimStatus.STALE)
+
 
 @router.post("", response_model=ClaimRead, status_code=status.HTTP_201_CREATED)
 async def create_claim(
@@ -44,8 +50,8 @@ async def create_claim(
     background_tasks: BackgroundTasks,
 ):
     """
-    Create a new claim. SLA deadline is set to now + 3 hours (IRDAI rule).
-    The claim lands in SUBMITTED status; document uploads follow separately.
+    Create a new claim as a DRAFT. The hospital then attaches documents and calls
+    POST /claims/{id}/submit, which hands it to the insurer and starts the 3-hour IRDAI SLA.
     Hospital desk only; the claim is stamped with the creator's hospital organization.
     """
     if current_user.role != UserRole.HOSPITAL_DESK:
@@ -85,8 +91,6 @@ async def create_claim(
 @router.get("/insurers")
 async def list_insurers(db: DBSession, current_user: CurrentUser):
     """Active insurer organizations a claim can be filed against."""
-    if current_user.role == UserRole.PATIENT:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not allowed")
     orgs = await user_service.list_organizations(db)
     return [
         {"id": str(o.id), "name": o.name}
@@ -107,11 +111,8 @@ async def list_claims(
 ):
     """
     List claims with optional filters.
-    Adjusters only see claims assigned to them; admins see all.
+    Adjusters and admins see every claim in their insurer scope; hospital desk only its own.
     """
-    adjuster_filter = None
-    if current_user.role == UserRole.ADJUSTER:
-        adjuster_filter = current_user.id
     if current_user.role == UserRole.HOSPITAL_DESK:
         if current_user.org_id is None:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not linked to a hospital organization")
@@ -125,8 +126,8 @@ async def list_claims(
         status=claim_status,
         hospital_org_id=hospital_org_id,
         insurer_org_id=insurer_org_id,
-        assigned_adjuster_id=adjuster_filter,
         sla_remaining_lt_minutes=sla_remaining_lt_minutes,
+        exclude_drafts=current_user.role != UserRole.HOSPITAL_DESK,  # insurer sees submitted claims only
         page=page,
         page_size=page_size,
     )
@@ -182,21 +183,62 @@ async def update_claim_status(
 ):
     """Transition a claim to a new status (with audit history)."""
     await require_claim_access(db, claim_id, current_user)
+    if body.status in _RETIRED_STATUSES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"'{body.status.value}' is no longer a valid status")
+    if body.status in _HOSPITAL_OWNED_STATUSES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Draft and submitted states are controlled by the hospital",
+        )
     claim = await claim_service.update_claim_status(db, claim_id, body, current_user.id)
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
     return claim
 
 
+@router.post("/{claim_id}/submit", response_model=ClaimRead)
+async def submit_claim(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
+    """
+    Hospital submits a drafted claim once its documents are attached.
+    Only now does the claim reach the insurer, and only now does the IRDAI SLA clock start.
+    """
+    require_hospital_desk(current_user, "submit claims")
+    claim = await require_claim_access(db, claim_id, current_user)
+    if claim.status != ClaimStatus.DRAFT:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="This claim has already been submitted")
+    if not claim.documents:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Attach at least one document before submitting the claim",
+        )
+    return await claim_service.submit_claim(db, claim, current_user.id)
+
+
 @router.delete("/{claim_id}", response_model=MessageResponse)
-async def void_claim(
+async def delete_or_void_claim(
     claim_id: uuid.UUID,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    """Soft-void a claim (sets status to REJECTED). Admin only."""
+    """
+    Hospital desk: permanently delete its own claim while it is still a draft. Once submitted,
+    the claim belongs to the insurer's review and can no longer be deleted by the hospital.
+    Admin: soft-void a claim (sets status to REJECTED).
+    """
+    if current_user.role == UserRole.HOSPITAL_DESK:
+        claim = await require_claim_access(db, claim_id, current_user)
+        if claim.status != ClaimStatus.DRAFT:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="Only draft claims can be deleted; this claim has already been submitted to the insurer",
+            )
+        number = claim.claim_number
+        await claim_service.delete_claim(db, claim)
+        return {"message": f"Claim {number} deleted"}
+
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete claims")
+    await require_claim_access(db, claim_id, current_user)
 
     update = ClaimStatusUpdate(status=ClaimStatus.REJECTED, note="Voided by admin")
     claim = await claim_service.update_claim_status(db, claim_id, update, current_user.id)
@@ -259,7 +301,7 @@ async def get_audit_report(claim_id: uuid.UUID, db: DBSession, current_user: Cur
             "hospital_name": claim.hospital_name,
             "insurer_name": claim.insurer_name,
             "status": claim.status.value,
-            "submitted_at": claim.submitted_at.isoformat(),
+            "submitted_at": claim.submitted_at.isoformat() if claim.submitted_at else None,
             "finalized_at": claim.finalized_at.isoformat() if claim.finalized_at else None,
             "sla_deadline": claim.sla_deadline.isoformat() if claim.sla_deadline else None,
             "sla_breached": claim.sla_breached,

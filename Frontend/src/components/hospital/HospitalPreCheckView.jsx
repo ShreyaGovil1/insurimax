@@ -145,14 +145,22 @@ export function HospitalPreCheckView({ onClaimCreated }) {
         billed_amount: parseFloat(form.billed_amount) || null,
         adjuster_notes: "Converted from hospital pre-submission audit check " + preCheckResult?.check_id,
       })
+      // Carry the audited bill over so the hospital doesn't have to upload it again
+      let billAttached = false
+      if (uploadedFile && newClaim?.id) {
+        const fd = new FormData()
+        fd.append("file", uploadedFile)
+        fd.append("doc_type", "itemized_bill")
+        billAttached = await api.documents.upload(newClaim.id, fd).then(() => true, () => false)
+      }
       toast({
-        title: "Formal Claim Registered",
-        description: `Claim ${newClaim.claim_number} logged! 3-Hour SLA initiated.`,
+        title: "Draft Claim Created",
+        description: `Claim ${newClaim.claim_number} saved as a draft${billAttached ? " with the audited bill attached" : ""}. Add any remaining documents, then submit it to the insurer to start the 3-hour SLA.`,
         variant: "success",
       })
       if (onClaimCreated) onClaimCreated(newClaim)
       if (newClaim?.id && navigate) {
-        navigate(`/claims/${newClaim.id}`)
+        navigate(`/claims/${newClaim.id}/documents`)
       }
     } catch (err) {
       toast({

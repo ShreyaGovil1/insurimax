@@ -46,7 +46,6 @@ class AdjusterDailyDigest(BaseSchema):
     sla_compliance_rate: float
     total_value_adjudicated_inr: float
     override_count: int
-    escalation_count: int
 
 
 class AuditTrailEntry(BaseSchema):

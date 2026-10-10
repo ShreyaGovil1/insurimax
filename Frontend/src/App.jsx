@@ -85,7 +85,8 @@ function AppLayout() {
 
   const handleClaimCreated = (newClaim) => {
     if (newClaim?.id) {
-      navigate(`/claims/${newClaim.id}`)
+      // New claims are drafts: send the hospital straight to attaching documents
+      navigate(`/claims/${newClaim.id}/documents`)
     } else {
       navigate("/queue")
     }

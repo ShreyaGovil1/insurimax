@@ -21,11 +21,11 @@ import enum
 
 
 class UserRole(str, enum.Enum):
+    # The platform has exactly three roles. Legacy SENIOR_ADJUSTER / PATIENT values remain in
+    # the Postgres enum type but no row uses them (migrated by f6a7b8c9d0e1).
     ADJUSTER = "adjuster"
-    SENIOR_ADJUSTER = "senior_adjuster"
     ADMIN = "admin"
     HOSPITAL_DESK = "hospital_desk"
-    PATIENT = "patient"
 
 
 class OrgType(str, enum.Enum):

@@ -21,13 +21,14 @@ from app.db.base import Base
 
 
 class ClaimStatus(str, enum.Enum):
+    DRAFT = "draft"               # hospital is still attaching documents; insurer can't see it, no SLA yet
     SUBMITTED = "submitted"
     DOCUMENTS_PENDING = "documents_pending"
     IN_REVIEW = "in_review"
     EXTRACTION_IN_PROGRESS = "extraction_in_progress"
     ADJUDICATION_IN_PROGRESS = "adjudication_in_progress"
     QUERIED = "queried"           # waiting on hospital clarification
-    ESCALATED = "escalated"
+    ESCALATED = "escalated"       # legacy value kept so old status-history rows still load; not settable
     AUTO_APPROVED = "auto_approved"
     APPROVED = "approved"
     PARTIALLY_APPROVED = "partially_approved"
@@ -93,7 +94,7 @@ class Claim(Base):
     status: Mapped[ClaimStatus] = mapped_column(
         Enum(ClaimStatus, name="claim_status_enum"),
         nullable=False,
-        default=ClaimStatus.SUBMITTED,
+        default=ClaimStatus.DRAFT,
         index=True,
     )
 
@@ -118,10 +119,8 @@ class Claim(Base):
     # Notes
     adjuster_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Submission metadata
-    submitted_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
+    # Submission metadata: set when the hospital submits the draft (starts the SLA clock)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

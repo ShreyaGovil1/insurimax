@@ -605,7 +605,6 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
       case "extraction_in_progress":
       case "adjudication_in_progress":
       case "in_review":
-      case "escalated":
         return 1
       case "queried":
         return 2

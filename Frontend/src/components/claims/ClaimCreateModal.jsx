@@ -63,8 +63,8 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
 
       const res = await api.claims.create(payload)
       toast({
-        title: "Claim Created Successfully",
-        description: `Claim ${res.claim_number} logged with 3-Hour IRDAI SLA timer initiated.`,
+        title: "Draft Claim Created",
+        description: `Claim ${res.claim_number} saved as a draft. Attach its documents, then submit it to the insurer to start the 3-hour SLA.`,
         variant: "success",
       })
       onClaimCreated?.(res)

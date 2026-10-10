@@ -21,10 +21,8 @@ import {
 
 const ROLES = [
   { value: "adjuster", label: "Adjuster" },
-  { value: "senior_adjuster", label: "Senior Adjuster" },
   { value: "admin", label: "Admin" },
   { value: "hospital_desk", label: "Hospital Desk" },
-  { value: "patient", label: "Patient" },
 ]
 const roleLabel = (r) => ROLES.find((x) => x.value === r)?.label || r
 

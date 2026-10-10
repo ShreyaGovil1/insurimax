@@ -1,9 +1,15 @@
 """
 Claim-level data isolation.
 
-- admin / senior_adjuster / adjuster (TPA staff) work claims from every hospital.
+- admin / adjuster (insurer-side staff) work claims from every hospital.
 - hospital_desk users only ever see claims of their own hospital organization.
-- everyone else (e.g. patients) has no access through the staff/hospital claim APIs.
+- DRAFT claims belong to the hospital alone until submitted; insurer-side staff can't see them.
+
+Hospital and insurer are separate entities, each owning its own actions:
+- hospital desk: create/submit claims, upload/delete its documents, answer queries.
+- insurer-side staff: run adjudication, override line items, finalize, change status, raise queries.
+Neither side can perform the other's actions; insurer-only routes use the AdjusterOrAbove
+dependency, hospital-only routes call require_hospital_desk().
 
 Inaccessible claims are reported as 404 so one hospital cannot probe another's claim IDs.
 """
@@ -12,17 +18,17 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.claim import Claim
+from app.models.claim import Claim, ClaimStatus
 from sqlalchemy import select
 
 from app.models.user import Organization, OrgType, User, UserRole
 
-STAFF_ROLES = (UserRole.ADMIN, UserRole.SENIOR_ADJUSTER, UserRole.ADJUSTER)
+STAFF_ROLES = (UserRole.ADMIN, UserRole.ADJUSTER)
 
 
 def can_access_claim(user: User, claim: Claim) -> bool:
     if user.role in STAFF_ROLES:
-        return True
+        return claim.status != ClaimStatus.DRAFT
     if user.role == UserRole.HOSPITAL_DESK:
         return user.org_id is not None and claim.hospital_org_id == user.org_id
     return False
@@ -52,3 +58,12 @@ async def require_claim_access(db: AsyncSession, claim_id: uuid.UUID, user: User
     if not allowed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
     return claim
+
+
+def require_hospital_desk(user: User, action: str) -> None:
+    """Hospital-only actions (e.g. uploading documents) are refused for insurer-side staff."""
+    if user.role != UserRole.HOSPITAL_DESK:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Only the hospital can {action}",
+        )

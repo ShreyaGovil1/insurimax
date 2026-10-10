@@ -16,16 +16,21 @@ import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Textarea } from "../ui/textarea"
 import { useToast } from "../ui/toast"
+import { useAuth } from "../../context/AuthContext"
 
 export function ClaimQueriesView({ claimId }) {
   const { toast } = useToast()
+  // The insurer raises and resolves queries; only the hospital answers them.
+  const { user } = useAuth()
+  const isInsurer = ["admin", "adjuster"].includes(user?.role)
+  const isHospital = user?.role === "hospital_desk"
   const [queries, setQueries] = useState([])
   const [loading, setLoading] = useState(true)
   const [newQueryText, setNewQueryText] = useState("")
   const [aiDrafted, setAiDrafted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  // Hospital response simulated modal / form
+  // Hospital response form
   const [activeQueryForResponse, setActiveQueryForResponse] = useState(null)
   const [responseText, setResponseText] = useState("")
 
@@ -93,8 +98,8 @@ export function ClaimQueriesView({ claimId }) {
         response_text: responseText,
       })
       toast({
-        title: "Hospital Response Logged",
-        description: "Response received from hospital billing desk.",
+        title: "Response Sent",
+        description: "Your reply has been sent to the insurer.",
         variant: "success",
       })
       setActiveQueryForResponse(null)
@@ -131,7 +136,8 @@ export function ClaimQueriesView({ claimId }) {
 
   return (
     <div className="space-y-6">
-      {/* Raise New Query */}
+      {/* Raise New Query (insurer only) */}
+      {isInsurer && (
       <Card>
         <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
           <div>
@@ -187,16 +193,19 @@ export function ClaimQueriesView({ claimId }) {
           </form>
         </CardContent>
       </Card>
+      )}
 
       {/* Query History Threads */}
       <Card>
         <CardHeader className="pb-3 border-b border-slate-100">
-          <CardTitle className="text-sm font-semibold">Active & Resolved Inquiries ({queries.length})</CardTitle>
+          <CardTitle className="text-sm font-semibold">
+            {isHospital ? "Queries from the Insurer" : "Active & Resolved Inquiries"} ({queries.length})
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {queries.length === 0 ? (
             <div className="p-8 text-center text-slate-500 text-xs">
-              No queries raised yet for this claim.
+              {isHospital ? "The insurer has not raised any queries on this claim." : "No queries raised yet for this claim."}
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -205,7 +214,9 @@ export function ClaimQueriesView({ claimId }) {
                   {/* Query Header */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-slate-900">Adjuster Inquiry</span>
+                      <span className="font-semibold text-slate-900">
+                        {isHospital ? "Insurer Query" : "Adjuster Inquiry"}
+                      </span>
                       {q.ai_drafted && (
                         <Badge variant="purple" className="text-[10px] py-0 px-1.5">
                           AI Drafted
@@ -240,13 +251,13 @@ export function ClaimQueriesView({ claimId }) {
                       <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900">
                         <span className="flex items-center space-x-1">
                           <Building className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>Hospital Billing Desk Response:</span>
+                          <span>{isHospital ? "Your Response:" : "Hospital Billing Desk Response:"}</span>
                         </span>
                         <span className="text-emerald-700 font-normal">{formatDateTime(q.responded_at)}</span>
                       </div>
                       <p className="text-slate-800 leading-relaxed text-xs">{q.response_text}</p>
 
-                      {q.status !== "resolved" && (
+                      {isInsurer && q.status !== "resolved" && (
                         <div className="pt-2 text-right">
                           <Button
                             size="sm"
@@ -259,18 +270,20 @@ export function ClaimQueriesView({ claimId }) {
                         </div>
                       )}
                     </div>
+                  ) : !isHospital ? (
+                    <div className="ml-4 text-[11px] text-slate-500 italic">Awaiting hospital response</div>
                   ) : (
-                    /* Hospital simulation input */
+                    /* Hospital reply form */
                     <div className="ml-4 pt-1">
                       {activeQueryForResponse === q.id ? (
                         <div className="space-y-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                           <label className="text-xs font-semibold text-blue-900 block">
-                            Simulate Hospital Desk Reply:
+                            Reply to the insurer:
                           </label>
                           <Textarea
                             value={responseText}
                             onChange={(e) => setResponseText(e.target.value)}
-                            placeholder="Hospital response notes..."
+                            placeholder="Your clarification for the insurer..."
                             rows={2}
                           />
                           <div className="flex justify-end space-x-2">
@@ -287,7 +300,7 @@ export function ClaimQueriesView({ claimId }) {
                               onClick={() => handleHospitalRespond(q.id)}
                               className="h-7 text-xs bg-blue-600 text-white"
                             >
-                              Post Hospital Response
+                              Send Response
                             </Button>
                           </div>
                         </div>
@@ -298,7 +311,7 @@ export function ClaimQueriesView({ claimId }) {
                           onClick={() => setActiveQueryForResponse(q.id)}
                           className="h-7 text-[11px] text-blue-600 hover:bg-blue-50"
                         >
-                          Simulate Hospital Desk Reply...
+                          Respond to Query
                         </Button>
                       )}
                     </div>

@@ -216,10 +216,9 @@ export function LoginPage({ onLogin }) {
           </div>
 
           {/* Demo Role Quick Access */}
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-3 gap-2.5">
             {[
               { key: "adjuster", label: "Adjuster", desc: "Review & approve claims" },
-              { key: "senior_adjuster", label: "Senior Adjuster", desc: "Escalated reviews" },
               { key: "admin", label: "TPA Admin", desc: "Full org management" },
               { key: "hospital_desk", label: "Hospital Desk", desc: "Pre-check & submit" },
             ].map((role) => (

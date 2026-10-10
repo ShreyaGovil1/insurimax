@@ -4,7 +4,7 @@ Adjudication service — runs the Gemini audit and persists results.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,6 +32,17 @@ _STATUS_MAP: dict[str, LineItemStatus] = {
     "non_payable": LineItemStatus.NON_PAYABLE,
     "rejected": LineItemStatus.REJECTED,
 }
+
+
+async def count_overridden_line_items(db: AsyncSession, claim_id: uuid.UUID) -> int:
+    """Adjuster overrides on the claim's current adjudication; a re-run would discard them."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(LineItemDecision)
+        .join(AdjudicationResult, AdjudicationResult.id == LineItemDecision.adjudication_result_id)
+        .where(AdjudicationResult.claim_id == claim_id, LineItemDecision.is_overridden == True)  # noqa: E712
+    )
+    return result.scalar_one()
 
 
 async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> AdjudicationResult:

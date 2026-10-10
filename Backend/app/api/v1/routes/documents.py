@@ -16,8 +16,9 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 
-from app.core.access import require_claim_access
+from app.core.access import require_claim_access, require_hospital_desk
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
+from app.models.claim import ClaimStatus
 from app.models.document import Document
 from app.models.user import User, UserRole
 from app.models.document import DocumentType
@@ -32,16 +33,12 @@ from app.services import claim_service, document_service
 
 router = APIRouter(tags=["Documents & Extraction"])
 
-_STAFF_ROLES = (UserRole.ADMIN, UserRole.SENIOR_ADJUSTER, UserRole.ADJUSTER)
+_STAFF_ROLES = (UserRole.ADMIN, UserRole.ADJUSTER)
+_CLOSED_STATUSES = (ClaimStatus.FINALIZED, ClaimStatus.REJECTED)
 
 
 def _is_staff(user: User) -> bool:
     return user.role in _STAFF_ROLES
-
-
-def _forbid_patient(user: User) -> None:
-    if user.role == UserRole.PATIENT:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Patients cannot access claim documents")
 
 
 async def _authorized_document(db, claim_id: uuid.UUID, doc_id: uuid.UUID, user: User) -> Document:
@@ -49,7 +46,6 @@ async def _authorized_document(db, claim_id: uuid.UUID, doc_id: uuid.UUID, user:
     Load a document and enforce role-based access:
     staff can touch any document on the claim; hospital desk only their own organisation's.
     """
-    _forbid_patient(user)
     await require_claim_access(db, claim_id, user)
     doc = await document_service.get_document(db, doc_id)
     if not doc or doc.claim_id != claim_id:
@@ -77,8 +73,10 @@ async def upload_document(
     Upload a document (bill, prescription, discharge summary, etc.) for a claim.
     File is stored in GCS; metadata is persisted in DB.
     """
-    _forbid_patient(current_user)
-    await require_claim_access(db, claim_id, current_user)
+    require_hospital_desk(current_user, "upload claim documents")
+    claim = await require_claim_access(db, claim_id, current_user)
+    if claim.status in _CLOSED_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="This claim is closed; documents can no longer be added")
 
     if not file.filename:
         raise HTTPException(
@@ -119,7 +117,6 @@ async def list_documents(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    _forbid_patient(current_user)
     await require_claim_access(db, claim_id, current_user)
     docs = await document_service.list_claim_documents(db, claim_id)
     if not _is_staff(current_user):
@@ -156,8 +153,18 @@ async def delete_document(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    """Delete a document. Staff: any; hospital desk: only their organization's."""
+    """
+    Delete a document. Hospital desk only, and only its own organization's documents on a
+    draft claim: once submitted, the documents are the evidence the insurer adjudicates on.
+    """
+    require_hospital_desk(current_user, "delete claim documents")
     await _authorized_document(db, claim_id, doc_id, current_user)
+    claim = await claim_service.get_claim(db, claim_id)
+    if claim.status != ClaimStatus.DRAFT:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Documents can't be deleted after the claim is submitted",
+        )
     deleted = await document_service.delete_document(db, doc_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")

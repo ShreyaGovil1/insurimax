@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react"
 import {
-  ArrowLeft,
+  Send,
+  Trash2,
   Sparkles,
   ShieldCheck,
   CheckCircle2,
@@ -34,11 +35,29 @@ import { Input } from "../ui/input"
 import { Textarea } from "../ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
+import { useAuth } from "../../context/AuthContext"
 import { DocumentExtractionView } from "../documents/DocumentExtractionView"
 import { ClaimQueriesView } from "../queries/ClaimQueriesView"
 
-export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }) {
+const STAFF_ROLES = ["admin", "adjuster"]
+
+const OVERRIDE_REASON_LABELS = {
+  upcoding_detected: "Upcoding detected",
+  incorrect_policy_application: "Incorrect policy application",
+  document_illegible: "Document illegible",
+  clinical_necessity: "Clinical necessity",
+  hospital_clarification: "Hospital clarification",
+  adjuster_discretion: "Adjuster discretion",
+  other: "Other",
+}
+
+export function AdjudicationCockpit({ claimId: propClaimId }) {
   const { toast } = useToast()
+  // Hospital and insurer are separate parties: the insurer adjudicates, the hospital drafts,
+  // submits and follows the outcome read-only.
+  const { user } = useAuth()
+  const isInsurer = STAFF_ROLES.includes(user?.role)
+  const isHospital = user?.role === "hospital_desk"
   let params = {}
   let navigate = () => {}
   try {
@@ -49,13 +68,6 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
   }
 
   const claimId = propClaimId || params.claimId
-  const handleBack = () => {
-    if (propOnBack) {
-      propOnBack()
-    } else if (navigate) {
-      navigate("/queue")
-    }
-  }
 
   // Tabs live in the URL (/claims/:claimId[/documents|/queries]); local state is only a
   // fallback when the cockpit is rendered outside the router (e.g. standalone tests).
@@ -76,6 +88,11 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
   const [explanation, setExplanation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [runningPipeline, setRunningPipeline] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  // Rerun confirmation: a rerun replaces every line-item decision, adjuster overrides included
+  const [rerunConfirm, setRerunConfirm] = useState({ open: false, showResults: false })
 
   // Override modal state (Phase 3)
   const [overrideModalOpen, setOverrideModalOpen] = useState(false)
@@ -157,12 +174,23 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
     loadExplanation(item.id)
   }
 
+  // First run goes straight through; a rerun must be confirmed because it discards overrides
+  const requestRunAdjudication = ({ showResults = false } = {}) => {
+    if (adjudication) {
+      setRerunConfirm({ open: true, showResults })
+    } else {
+      handleRunAdjudication({ showResults })
+    }
+  }
+
   // Trigger Gemini Adjudication Pipeline
-  const handleRunAdjudication = async () => {
+  const handleRunAdjudication = async ({ confirmDiscardOverrides = false, showResults = false } = {}) => {
+    setRerunConfirm({ open: false, showResults: false })
     setRunningPipeline(true)
     try {
-      const res = await api.adjudication.run(claimId)
+      const res = await api.adjudication.run(claimId, { confirmDiscardOverrides })
       setAdjudication(res)
+      if (showResults) setActiveTab("adjudication")
       // Reload claim record so status, billed amount, and badges update immediately
       const updatedClaim = await api.claims.getById(claimId).catch(() => null)
       if (updatedClaim) setClaim(updatedClaim)
@@ -176,6 +204,12 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
         handleSelectItem(res.line_items[0])
       }
     } catch (err) {
+      if (err.status === 409) {
+        // Overrides were added since this page loaded: refresh and ask again
+        await loadClaimData()
+        setRerunConfirm({ open: true, showResults })
+        return
+      }
       toast({
         title: "Adjudication Failed",
         description: err.message,
@@ -186,6 +220,40 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
     }
   }
 
+  // Hospital hands the draft to the insurer; this is what starts the SLA clock
+  const handleSubmitClaim = async () => {
+    if (!window.confirm("Submit this claim to the insurer? The 3-hour SLA starts now and documents can no longer be deleted.")) return
+    setSubmitting(true)
+    try {
+      const updated = await api.claims.submit(claimId)
+      setClaim(updated)
+      toast({
+        title: "Claim Submitted",
+        description: `${updated.claim_number} is now with ${updated.insurer_name || "the insurer"}. 3-hour IRDAI SLA started.`,
+        variant: "success",
+      })
+    } catch (err) {
+      toast({ title: "Submission Failed", description: err.message, variant: "destructive" })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Hospital discards a draft it no longer needs (only drafts; submitted claims are the insurer's)
+  const handleDeleteClaim = async () => {
+    setDeleting(true)
+    try {
+      await api.claims.delete(claimId)
+      toast({ title: "Draft Deleted", description: `${claim?.claim_number} and its documents were deleted.`, variant: "success" })
+      setDeleteConfirmOpen(false)
+      if (navigate) navigate("/claims")
+    } catch (err) {
+      toast({ title: "Delete Failed", description: err.message, variant: "destructive" })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   // Re-open/unlock finalized claim for audit
   const handleUnlockClaim = async () => {
     try {
@@ -193,7 +261,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
       await loadClaimData()
       toast({
         title: "Claim Unlocked",
-        description: "Status reset to In Review. You can now re-audit or run AI pipeline.",
+        description: "Status reset to In Review. You can now re-audit or rerun AI adjudication.",
         variant: "info",
       })
     } catch (err) {
@@ -332,6 +400,10 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
   }
 
   const isFinalized = claim?.status === "finalized" || adjudication?.status === "finalized"
+  const isDraft = claim?.status === "draft"
+  const selectedItem = adjudication?.line_items?.find((i) => i.id === selectedItemId)
+  const hasAdjudication = Boolean(adjudication)
+  const overrideCount = adjudication?.line_items?.filter((li) => li.is_overridden).length || 0
 
   if (loading) {
     return (
@@ -346,16 +418,6 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
       {/* Top Breadcrumb & Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div className="flex items-center space-x-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleBack}
-            className="rounded-full h-8 px-3 text-xs text-slate-700 cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-            <span>Back to Queue</span>
-          </Button>
-
           <div>
             <div className="flex items-center space-x-2">
               <h1 className="text-xl font-bold text-slate-900 tracking-tight">
@@ -365,7 +427,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                 variant={isFinalized ? "default" : "info"}
                 className="capitalize text-xs font-semibold"
               >
-                {claim?.status?.replace("_", " ")}
+                {claim?.status?.replaceAll("_", " ")}
               </Badge>
               {adjudication?.gemini_model_used && (
                 <Badge variant="purple" className="text-[10px] gap-1 px-1.5 h-4">
@@ -386,43 +448,89 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
 
         {/* Action Controls */}
         <div className="flex items-center space-x-2">
-          <SLAUrgencyBadge
-            slaDeadline={claim?.sla_deadline}
-            isBreached={claim?.sla_breached}
-          />
+          {isDraft ? (
+            <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-1">
+              SLA starts on submission
+            </span>
+          ) : (
+            <SLAUrgencyBadge
+              slaDeadline={claim?.sla_deadline}
+              isBreached={claim?.sla_breached}
+            />
+          )}
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleRunAdjudication}
-            disabled={runningPipeline || isFinalized}
-            className="text-xs font-semibold gap-1.5 border-blue-300 text-blue-700 hover:bg-blue-50"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 ${runningPipeline ? "animate-spin" : ""}`} />
-            <span>{runningPipeline ? "Analyzing..." : "Re-Run AI Pipeline"}</span>
-          </Button>
+          {isHospital && isDraft && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDeleteConfirmOpen(true)}
+              disabled={deleting || submitting}
+              className="text-xs font-semibold gap-1.5 border-red-200 text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Draft</span>
+            </Button>
+          )}
 
-          {isFinalized ? (
+          {isHospital && isDraft && (
+            <Button
+              size="sm"
+              onClick={handleSubmitClaim}
+              disabled={submitting}
+              className="text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{submitting ? "Submitting..." : "Submit to Insurer"}</span>
+            </Button>
+          )}
+
+          {isInsurer && (
+            <Button
+              size="sm"
+              onClick={() => requestRunAdjudication()}
+              disabled={runningPipeline || isFinalized}
+              className={`text-xs font-semibold gap-1.5 shadow-sm ${
+                hasAdjudication
+                  ? "bg-amber-400 hover:bg-amber-500 text-amber-950"
+                  : "bg-[#A3FF12] hover:bg-[#8ee60e] text-slate-950"
+              }`}
+            >
+              {hasAdjudication ? (
+                <RotateCcw className={`w-3.5 h-3.5 ${runningPipeline ? "animate-spin" : ""}`} />
+              ) : (
+                <Sparkles className={`w-3.5 h-3.5 ${runningPipeline ? "animate-pulse" : ""}`} />
+              )}
+              <span>
+                {runningPipeline ? "Analyzing..." : hasAdjudication ? "Rerun AI Adjudication" : "Run AI Adjudication"}
+              </span>
+            </Button>
+          )}
+
+          {isFinalized && (isInsurer || isHospital) && (
             <div className="flex items-center space-x-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleUnlockClaim}
-                className="text-xs font-semibold gap-1.5 border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Unlock for Re-Audit</span>
-              </Button>
+              {isInsurer && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleUnlockClaim}
+                  className="text-xs font-semibold gap-1.5 border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Unlock for Re-Audit</span>
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={handleViewAuditReport}
                 className="text-xs font-semibold gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
               >
                 <FileCheck className="w-3.5 h-3.5" />
-                <span>Compliance Audit Report</span>
+                <span>{isHospital ? "View Settlement Report" : "Compliance Audit Report"}</span>
               </Button>
             </div>
-          ) : (
+          )}
+
+          {isInsurer && !isFinalized && (
             <Button
               size="sm"
               onClick={() => setFinalizeModalOpen(true)}
@@ -434,6 +542,19 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           )}
         </div>
       </div>
+
+      {isDraft && isHospital && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+          <div>
+            <div className="font-bold">Draft: not yet visible to {claim?.insurer_name || "the insurer"}</div>
+            <p className="mt-0.5 text-amber-800">
+              Attach all the documents for this claim on the documents tab, then click <strong>Submit to Insurer</strong>.
+              The 3-hour IRDAI SLA starts at submission.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Critical Identity Mismatch / Fraud Alert Banner */}
       {(() => {
@@ -561,7 +682,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           }`}
         >
           <Scale className={`w-3.5 h-3.5 ${activeTab === "adjudication" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>Line-Item Adjudication</span>
+          <span>{isHospital ? "Adjudication Outcome" : "Line-Item Adjudication"}</span>
           <span className={`ml-1 text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
             activeTab === "adjudication" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"
           }`}>
@@ -578,7 +699,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           }`}
         >
           <FileText className={`w-3.5 h-3.5 ${activeTab === "documents" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>Hospital Documents & OCR</span>
+          <span>{isHospital ? "Claim Documents" : "Hospital Documents & OCR"}</span>
         </button>
 
         <button
@@ -590,7 +711,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
           }`}
         >
           <MessageSquare className={`w-3.5 h-3.5 ${activeTab === "queries" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>Hospital Queries</span>
+          <span>{isHospital ? "Insurer Queries" : "Hospital Queries"}</span>
         </button>
       </div>
 
@@ -599,12 +720,10 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
         <DocumentExtractionView
           claimId={claimId}
           claim={claim}
-          onRunAdjudication={async () => {
-            await handleRunAdjudication()
-            setActiveTab("adjudication")
-          }}
+          onRunAdjudication={() => requestRunAdjudication({ showResults: true })}
           onSwitchToAdjudication={() => setActiveTab("adjudication")}
           runningPipeline={runningPipeline}
+          hasAdjudication={hasAdjudication}
         />
       )}
 
@@ -623,7 +742,9 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                   Itemized Bill Adjudication Schedule
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Click any line item to inspect AI reasoning and verified policy clause.
+                  {isHospital
+                    ? "Click any line item to see the insurer's decision, its reasoning and any adjuster changes."
+                    : "Click any line item to inspect AI reasoning and verified policy clause."}
                 </p>
               </div>
               <span className="text-[11px] font-semibold text-slate-600">
@@ -640,7 +761,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                     <th className="py-2.5 px-3 text-right">Billed</th>
                     <th className="py-2.5 px-3 text-right">Approved</th>
                     <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 text-center">Action</th>
+                    {isInsurer && <th className="py-2.5 px-3 text-center">Action</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -699,19 +820,21 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                           </Badge>
                         </td>
 
-                        <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openOverrideModal(item)}
-                            disabled={isFinalized}
-                            className="h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                            title="Override decision"
-                          >
-                            <Edit3 className="w-3 h-3 mr-1" />
-                            <span>Override</span>
-                          </Button>
-                        </td>
+                        {isInsurer && (
+                          <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => openOverrideModal(item)}
+                              disabled={isFinalized}
+                              className="h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                              title="Override decision"
+                            >
+                              <Edit3 className="w-3 h-3 mr-1" />
+                              <span>Override</span>
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
@@ -790,8 +913,25 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                     )}
                   </div>
 
+                  {/* Adjuster's override decision, visible to both parties */}
+                  {selectedItem?.is_overridden && (
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 text-xs">
+                      <div className="flex items-center space-x-1.5 font-bold text-amber-900">
+                        <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Adjuster Override</span>
+                      </div>
+                      <div className="text-amber-900">
+                        <span className="font-semibold">Reason: </span>
+                        {OVERRIDE_REASON_LABELS[selectedItem.override_reason] || selectedItem.override_reason || "Not specified"}
+                      </div>
+                      {selectedItem.override_note && (
+                        <div className="text-amber-800 leading-relaxed">{selectedItem.override_note}</div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Direct Override Action CTA */}
-                  {!isFinalized && (
+                  {isInsurer && !isFinalized && (
                     <Button
                       onClick={() => {
                         const itm = adjudication?.line_items?.find((i) => i.id === explanation.item_id)
@@ -879,7 +1019,7 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
                 <option value="upcoding_detected">Upcoding Detected</option>
                 <option value="incorrect_policy_application">Incorrect Policy Application</option>
                 <option value="document_illegible">Document Illegible / Verification</option>
-                <option value="adjuster_discretion">Adjuster Senior Discretion</option>
+                <option value="adjuster_discretion">Adjuster Discretion</option>
                 <option value="other">Other Rationale</option>
               </select>
             </div>
@@ -904,6 +1044,76 @@ export function AdjudicationCockpit({ claimId: propClaimId, onBack: propOnBack }
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete draft confirmation */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent onClose={() => setDeleteConfirmOpen(false)}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-red-600" />
+              <span>Delete draft {claim?.claim_number}?</span>
+            </DialogTitle>
+            <DialogDescription>
+              The draft and every document attached to it are permanently deleted. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleDeleteClaim} disabled={deleting} className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{deleting ? "Deleting..." : "Delete Draft"}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rerun confirmation */}
+      <Dialog
+        open={rerunConfirm.open}
+        onOpenChange={(open) => setRerunConfirm((prev) => ({ ...prev, open }))}
+      >
+        <DialogContent onClose={() => setRerunConfirm({ open: false, showResults: false })}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertOctagon className="w-4 h-4 text-red-600" />
+              <span>Rerun AI Adjudication?</span>
+            </DialogTitle>
+            <DialogDescription>
+              This claim has already been adjudicated. A rerun replaces every line-item decision with a fresh AI result.
+            </DialogDescription>
+          </DialogHeader>
+          {overrideCount > 0 ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+              <strong>
+                {overrideCount} adjuster override{overrideCount === 1 ? "" : "s"} will be permanently discarded,
+              </strong>{" "}
+              along with their reasons and notes. Re-apply them after the rerun if they still hold.
+            </div>
+          ) : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              The current decisions, amounts and AI explanations will be replaced.
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRerunConfirm({ open: false, showResults: false })}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                handleRunAdjudication({ confirmDiscardOverrides: true, showResults: rerunConfirm.showResults })
+              }
+              className={`text-white gap-1.5 ${
+                overrideCount > 0 ? "bg-red-600 hover:bg-red-700" : "bg-amber-500 hover:bg-amber-600"
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{overrideCount > 0 ? "Rerun & Discard Overrides" : "Rerun AI Adjudication"}</span>
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

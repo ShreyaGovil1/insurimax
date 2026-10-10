@@ -56,17 +56,6 @@ async def get_adjuster_daily_digest(
     )
     override_count = override_result.scalar_one() or 0
 
-    # Escalation count
-    escalated_result = await db.execute(
-        select(func.count(Claim.id)).where(
-            Claim.assigned_adjuster_id == adjuster_id,
-            Claim.status == ClaimStatus.ESCALATED,
-            Claim.updated_at >= day_start,
-            Claim.updated_at < day_end,
-        )
-    )
-    escalation_count = escalated_result.scalar_one() or 0
-
     return {
         "adjuster_id": adjuster_id,
         "date": target_date.date().isoformat(),
@@ -75,7 +64,6 @@ async def get_adjuster_daily_digest(
         "sla_compliance_rate": round(sla_rate, 1),
         "total_value_adjudicated_inr": round(total_value, 2),
         "override_count": override_count,
-        "escalation_count": escalation_count,
     }
 
 
@@ -214,6 +202,7 @@ async def get_queue(
     status_filter: ClaimStatus | None = None,
     hospital_org_id: uuid.UUID | None = None,
     insurer_org_id: uuid.UUID | None = None,
+    exclude_drafts: bool = False,
 ) -> list[Claim]:
     """
     Returns claims sorted by SLA urgency.
@@ -232,6 +221,8 @@ async def get_queue(
             excluded.append(ClaimStatus.AUTO_APPROVED)
         query = query.where(Claim.status.not_in(excluded))
 
+    if exclude_drafts:
+        query = query.where(Claim.status != ClaimStatus.DRAFT)
     if hospital_org_id:
         query = query.where(Claim.hospital_org_id == hospital_org_id)
     if insurer_org_id:

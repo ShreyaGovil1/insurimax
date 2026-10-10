@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
-from app.core.deps import AdminOrSenior, CurrentUser, DBSession
+from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.user import Organization, UserRole
 from app.models.webhook import WebhookSubscription
 from app.schemas.analytics import (
@@ -44,7 +44,7 @@ router = APIRouter(tags=["Analytics & Compliance"])
 async def get_hospital_billing_patterns(
     hospital_org_id: uuid.UUID,
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
 ):
     """
     Phase 6 pattern detection: item-level override frequencies per hospital.
@@ -56,7 +56,7 @@ async def get_hospital_billing_patterns(
 
 @router.get("/analytics/anomalies")
 async def get_anomalies(
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
     severity: str | None = Query(None, description="low | medium | high"),
     limit: int = Query(50, ge=1, le=200),
 ):
@@ -77,7 +77,7 @@ async def get_hospital_override_history(
     hospital_org_id: uuid.UUID,
     limit: int = Query(50, ge=1, le=200),
     db: DBSession = None,
-    current_user: AdminOrSenior = None,
+    current_user: AdjusterOrAbove = None,
 ):
     """Per-hospital override history — feeds the adjuster's 'prior overrides' warning."""
     patterns = await analytics_service.get_hospital_billing_patterns(db, hospital_org_id)
@@ -92,7 +92,7 @@ async def get_hospital_override_history(
 @router.post("/analytics/anomalies/{anomaly_id}/investigate")
 async def mark_anomaly_investigated(
     anomaly_id: uuid.UUID,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
 ):
     """Mark an anomaly as under investigation."""
     return {
@@ -107,7 +107,7 @@ async def mark_anomaly_investigated(
 @router.get("/compliance/sla-report", response_model=SLAReport)
 async def get_sla_report(
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
     period_days: int = Query(30, ge=1, le=365),
     org_id: uuid.UUID | None = Query(None),
 ):
@@ -127,7 +127,7 @@ async def get_sla_report(
 @router.get("/compliance/audit-trail")
 async def get_audit_trail(
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
     claim_id: uuid.UUID | None = Query(None),
     user_id: uuid.UUID | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
@@ -246,7 +246,7 @@ async def update_auto_approval_thresholds(
     confidence_threshold: float | None = None,
     max_amount_inr: float | None = None,
     db: DBSession = None,
-    current_user: AdminOrSenior = None,
+    current_user: AdjusterOrAbove = None,
 ):
     result = await db.execute(select(Organization).where(Organization.id == org_id))
     org = result.scalar_one_or_none()
@@ -309,7 +309,7 @@ async def update_org_settings(
     org_id: uuid.UUID,
     body: dict,
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
 ):
     result = await db.execute(select(Organization).where(Organization.id == org_id))
     org = result.scalar_one_or_none()

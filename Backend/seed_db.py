@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.models.user import User, UserRole, Organization, OrgType
@@ -70,10 +71,9 @@ async def seed():
 
         await db.flush()
 
-        # ── 2. Seed Users with All 4 Roles ───────────────────────────────────
+        # ── 2. Seed Users with All 3 Roles ───────────────────────────────────
         users_data = [
             ("adjuster@insurimax.com", "Priya Sharma", UserRole.ADJUSTER, org_tpa.id),
-            ("senior.adjuster@insurimax.com", "Rajesh Patel (Lead Adjuster)", UserRole.SENIOR_ADJUSTER, org_tpa.id),
             ("admin@insurimax.com", "Vikram Seth (Operations Admin)", UserRole.ADMIN, org_tpa.id),
             ("hospital@insurimax.com", "Sunita Rao (Apollo Billing)", UserRole.HOSPITAL_DESK, org_apollo.id),
         ]
@@ -271,7 +271,7 @@ async def seed():
                 "billed_amount": 620000.0,
                 "approved_amount": 485000.0,
                 "deducted_amount": 135000.0,
-                "status": ClaimStatus.ESCALATED,
+                "status": ClaimStatus.IN_REVIEW,
                 "assigned_adjuster_id": adjuster.id,
                 "ai_confidence_score": 0.76,
                 "sla_deadline": now - timedelta(minutes=18),
@@ -350,6 +350,8 @@ async def seed():
                     ai_confidence_score=cd["ai_confidence_score"],
                     sla_deadline=cd["sla_deadline"],
                     sla_breached=cd["sla_breached"],
+                    # demo claims are already submitted: their SLA clock started 3h before the deadline
+                    submitted_at=cd["sla_deadline"] - timedelta(hours=settings.SLA_HOURS),
                 )
                 db.add(c)
                 db.add(ClaimStatusHistory(

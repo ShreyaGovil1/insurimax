@@ -64,17 +64,7 @@ def require_roles(*roles: UserRole):
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 DBSession = Annotated[AsyncSession, Depends(get_db)]
-AdminOrSenior = Annotated[
-    User,
-    Depends(require_roles(UserRole.ADMIN, UserRole.SENIOR_ADJUSTER)),
-]
 AdjusterOrAbove = Annotated[
     User,
-    Depends(
-        require_roles(
-            UserRole.ADMIN,
-            UserRole.SENIOR_ADJUSTER,
-            UserRole.ADJUSTER,
-        )
-    ),
+    Depends(require_roles(UserRole.ADMIN, UserRole.ADJUSTER)),
 ]

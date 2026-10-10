@@ -34,7 +34,6 @@ const ADMIN_NAV_ITEM = { id: "admin", path: "/admin", label: "Admin", icon: Sett
 
 const ROLE_OPTIONS = [
   { key: "adjuster", label: "TPA Adjuster", short: "Adjuster" },
-  { key: "senior_adjuster", label: "Senior Adjuster (Approval)", short: "Senior Adj." },
   { key: "admin", label: "TPA Operations Admin", short: "Admin" },
   { key: "hospital_desk", label: "Hospital Billing Desk", short: "Hospital" },
 ]

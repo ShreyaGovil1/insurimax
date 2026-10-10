@@ -18,7 +18,7 @@ import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
-from app.core.deps import AdjusterOrAbove, AdminOrSenior, CurrentUser, DBSession
+from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.policy import (
     NonPayableItemCreate,

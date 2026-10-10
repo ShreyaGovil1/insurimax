@@ -4,11 +4,11 @@ Claim query (hospital clarification loop) service.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gcp.gemini import QUERY_DRAFT_SYSTEM_PROMPT, generate_json
-from app.models.claim import Claim, ClaimStatus
+from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
 from app.models.query import ClaimQuery, QueryStatus
 from app.schemas.query import ClaimQueryCreate, QueryResponseRequest, QueryResolveRequest
 
@@ -31,7 +31,16 @@ async def create_query(
     # Update claim status to queried
     claim_result = await db.execute(select(Claim).where(Claim.id == claim_id))
     claim = claim_result.scalar_one_or_none()
-    if claim:
+    if claim and claim.status != ClaimStatus.QUERIED:
+        db.add(
+            ClaimStatusHistory(
+                claim_id=claim.id,
+                from_status=claim.status,
+                to_status=ClaimStatus.QUERIED,
+                changed_by_id=raised_by_id,
+                note="Query raised to hospital",
+            )
+        )
         claim.status = ClaimStatus.QUERIED
 
     await db.flush()
@@ -67,6 +76,34 @@ async def get_query(db: AsyncSession, query_id: uuid.UUID) -> ClaimQuery | None:
     return result.scalar_one_or_none()
 
 
+async def _return_to_review_if_answered(
+    db: AsyncSession, claim_id: uuid.UUID, changed_by_id: uuid.UUID
+) -> None:
+    """Once no query on the claim is still open (unanswered), a QUERIED claim goes back to IN_REVIEW."""
+    open_left = (
+        await db.execute(
+            select(func.count())
+            .select_from(ClaimQuery)
+            .where(ClaimQuery.claim_id == claim_id, ClaimQuery.status == QueryStatus.OPEN)
+        )
+    ).scalar_one()
+    if open_left:
+        return
+    claim = (await db.execute(select(Claim).where(Claim.id == claim_id))).scalar_one_or_none()
+    if claim and claim.status == ClaimStatus.QUERIED:
+        claim.status = ClaimStatus.IN_REVIEW
+        db.add(
+            ClaimStatusHistory(
+                claim_id=claim.id,
+                from_status=ClaimStatus.QUERIED,
+                to_status=ClaimStatus.IN_REVIEW,
+                changed_by_id=changed_by_id,
+                note="All queries answered by the hospital",
+            )
+        )
+        await db.flush()
+
+
 async def respond_to_query(
     db: AsyncSession,
     query_id: uuid.UUID,
@@ -83,6 +120,8 @@ async def respond_to_query(
     query.responded_at = datetime.now(timezone.utc)
     query.status = QueryStatus.RESPONDED
     await db.flush()
+
+    await _return_to_review_if_answered(db, query.claim_id, responded_by_id)
     return query
 
 
@@ -101,4 +140,5 @@ async def resolve_query(
     query.resolved_at = datetime.now(timezone.utc)
     query.resolution_note = data.resolution_note
     await db.flush()
+    await _return_to_review_if_answered(db, query.claim_id, resolved_by_id)
     return query

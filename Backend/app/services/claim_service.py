@@ -4,11 +4,12 @@ Claim service — business logic for creating, listing, and managing claims.
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.gcp import storage as gcs
 from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
 from app.models.adjudication import AdjudicationResult
 from app.schemas.claim import ClaimCreate, ClaimStatusUpdate
@@ -37,8 +38,10 @@ async def create_claim(db: AsyncSession, data: ClaimCreate, created_by_id: uuid.
         policy_version_id=data.policy_version_id,
         billed_amount=data.billed_amount,
         adjuster_notes=data.adjuster_notes,
-        status=ClaimStatus.SUBMITTED,
-        sla_deadline=datetime.now(timezone.utc) + timedelta(hours=settings.SLA_HOURS),
+        # A new claim is a hospital-side draft: hidden from the insurer, no SLA clock yet.
+        status=ClaimStatus.DRAFT,
+        submitted_at=None,
+        sla_deadline=None,
     )
     db.add(claim)
     await db.flush()
@@ -47,11 +50,31 @@ async def create_claim(db: AsyncSession, data: ClaimCreate, created_by_id: uuid.
     history = ClaimStatusHistory(
         claim_id=claim.id,
         from_status=None,
-        to_status=ClaimStatus.SUBMITTED,
+        to_status=ClaimStatus.DRAFT,
         changed_by_id=created_by_id,
-        note="Claim created",
+        note="Claim drafted",
     )
     db.add(history)
+    await db.flush()
+    return claim
+
+
+async def submit_claim(db: AsyncSession, claim: Claim, submitted_by_id: uuid.UUID) -> Claim:
+    """Hand a draft over to the insurer: it becomes visible to them and the SLA clock starts now."""
+    now = datetime.now(timezone.utc)
+    claim.status = ClaimStatus.SUBMITTED
+    claim.submitted_at = now
+    claim.sla_deadline = now + timedelta(hours=settings.SLA_HOURS)
+    claim.sla_breached = False
+    db.add(
+        ClaimStatusHistory(
+            claim_id=claim.id,
+            from_status=ClaimStatus.DRAFT,
+            to_status=ClaimStatus.SUBMITTED,
+            changed_by_id=submitted_by_id,
+            note="Submitted to insurer",
+        )
+    )
     await db.flush()
     return claim
 
@@ -76,11 +99,14 @@ async def list_claims(
     insurer_org_id: uuid.UUID | None = None,
     assigned_adjuster_id: uuid.UUID | None = None,
     sla_remaining_lt_minutes: int | None = None,
+    exclude_drafts: bool = False,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Claim], int]:
     query = select(Claim)
 
+    if exclude_drafts:
+        query = query.where(Claim.status != ClaimStatus.DRAFT)
     if status:
         query = query.where(Claim.status == status)
     if hospital_org_id:
@@ -203,3 +229,23 @@ async def check_and_update_sla_breach(db: AsyncSession) -> int:
     )
     rows = result.fetchall()
     return len(rows)
+
+
+async def delete_claim(db: AsyncSession, claim: Claim) -> None:
+    """
+    Permanently delete a claim. Documents, extraction jobs, status history, queries and any
+    adjudication rows go with it via ON DELETE CASCADE; the uploaded files are removed from storage.
+    """
+    for doc in claim.documents:
+        try:
+            await gcs.delete_object(doc.gcs_object_key)
+        except Exception:
+            pass  # a missing/unreachable file must not block deleting the claim record
+    claim_id = claim.id
+    loaded = [*claim.documents, *claim.status_history, claim]
+    if claim.adjudication_result is not None:
+        loaded.append(claim.adjudication_result)
+    for obj in loaded:
+        db.expunge(obj)
+    await db.execute(delete(Claim).where(Claim.id == claim_id))
+    await db.flush()

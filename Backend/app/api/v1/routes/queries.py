@@ -10,7 +10,6 @@ PATCH  /queries/{queryId}/resolve
 GET    /queue
 GET    /queue/unassigned
 POST   /queue/{claimId}/assign
-POST   /queue/{claimId}/escalate
 
 GET    /adjusters/{adjusterId}/daily-digest
 GET    /adjusters/{adjusterId}/overrides
@@ -19,11 +18,11 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.core.access import insurer_scope, require_claim_access
-from app.core.deps import AdjusterOrAbove, AdminOrSenior, CurrentUser, DBSession
+from app.core.access import STAFF_ROLES, insurer_scope, require_claim_access, require_hospital_desk
+from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
 from app.models.user import UserRole
-from app.schemas.claim import ClaimSummary, ClaimStatusUpdate
+from app.schemas.claim import ClaimSummary
 from app.schemas.query import ClaimQueryCreate, ClaimQueryRead, QueryResolveRequest, QueryResponseRequest
 from app.services import analytics_service, claim_service, query_service
 
@@ -53,6 +52,7 @@ async def create_query(
     Set ai_drafted=true to get an AI-generated query text drafted from context.
     Pass context in query_text when ai_drafted=true; the AI will rewrite it.
     """
+    await require_claim_access(db, claim_id, current_user)
     query_text = body.query_text
     if body.ai_drafted and body.query_text:
         # Use Gemini to polish/draft the query from the context the adjuster provided
@@ -93,10 +93,8 @@ async def respond_to_query(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    """
-    Hospital desk responds to a query.
-    Accepted by any authenticated user (hospital_desk role in production).
-    """
+    """Hospital desk responds to a query raised by the insurer. Insurer staff cannot answer for the hospital."""
+    require_hospital_desk(current_user, "respond to queries")
     existing = await query_service.get_query(db, query_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
@@ -115,6 +113,10 @@ async def resolve_query(
     current_user: AdjusterOrAbove,
 ):
     """Mark a query as resolved once the adjuster is satisfied with the response."""
+    existing = await query_service.get_query(db, query_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
+    await _ensure_query_access(db, existing, current_user)
     q = await query_service.resolve_query(db, query_id, body, current_user.id)
     if not q:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query not found")
@@ -131,28 +133,24 @@ async def get_queue(
     include_finalized: bool = Query(False),
 ):
     """
-    Adjuster's assigned case queue, sorted by SLA urgency (nearest deadline first).
-    Admins and senior adjusters see all active claims.
-    Regular adjusters only see their own assignments.
+    Active case queue, sorted by SLA urgency (nearest deadline first).
+    Adjusters and admins see all active claims in their insurer scope; hospital desk its own.
     """
-    adjuster_id = None
     hospital_org_id = None
-    if current_user.role == UserRole.ADJUSTER:
-        adjuster_id = current_user.id
-    elif current_user.role == UserRole.HOSPITAL_DESK:
+    if current_user.role == UserRole.HOSPITAL_DESK:
         if current_user.org_id is None:
             return []
         hospital_org_id = current_user.org_id
-    elif current_user.role not in (UserRole.ADMIN, UserRole.SENIOR_ADJUSTER):
+    elif current_user.role not in STAFF_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
     claims = await analytics_service.get_queue(
         db,
-        adjuster_id=adjuster_id,
         hospital_org_id=hospital_org_id,
         insurer_org_id=await insurer_scope(db, current_user),
         status_filter=claim_status,
         include_finalized=include_finalized,
+        exclude_drafts=hospital_org_id is None,  # drafts reach the insurer only once submitted
     )
     summaries: list[ClaimSummary] = []
     for c in claims:
@@ -184,10 +182,15 @@ async def get_queue(
 @router.get("/queue/unassigned", response_model=list[ClaimSummary])
 async def get_unassigned_queue(
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
 ):
     """Unassigned claims for routing by senior adjusters / admins."""
-    claims = await analytics_service.get_queue(db, unassigned_only=True)
+    claims = await analytics_service.get_queue(
+        db,
+        unassigned_only=True,
+        insurer_org_id=await insurer_scope(db, current_user),
+        exclude_drafts=True,
+    )
     return [
         ClaimSummary(
             id=c.id,
@@ -212,7 +215,7 @@ async def assign_claim(
     claim_id: uuid.UUID,
     adjuster_id: uuid.UUID,
     db: DBSession,
-    current_user: AdminOrSenior,
+    current_user: AdjusterOrAbove,
 ):
     """Assign or reassign a claim to an adjuster."""
     await require_claim_access(db, claim_id, current_user)
@@ -224,25 +227,6 @@ async def assign_claim(
         "claim_id": str(claim_id),
         "adjuster_id": str(adjuster_id),
     }
-
-
-@router.post("/queue/{claim_id}/escalate", response_model=dict)
-async def escalate_claim(
-    claim_id: uuid.UUID,
-    reason: str | None = None,
-    db: DBSession = None,
-    current_user: CurrentUser = None,
-):
-    """Escalate a claim to a senior adjuster."""
-    await require_claim_access(db, claim_id, current_user)
-    update_data = ClaimStatusUpdate(
-        status=ClaimStatus.ESCALATED,
-        note=reason or "Escalated by adjuster",
-    )
-    claim = await claim_service.update_claim_status(db, claim_id, update_data, current_user.id)
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
-    return {"message": f"Claim {claim_id} escalated", "claim_id": str(claim_id)}
 
 
 # ── Adjuster analytics ────────────────────────────────────────────────────────

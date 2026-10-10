@@ -23,11 +23,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card"
 import { Badge } from "../ui/badge"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
 
 export function AdjusterQueueView({ onSelectClaim }) {
   const { user } = useAuth()
+  const isInsurer = ["admin", "adjuster"].includes(user?.role)
   const { toast } = useToast()
   let navigate = () => {}
   try {
@@ -47,18 +47,12 @@ export function AdjusterQueueView({ onSelectClaim }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [dailyDigest, setDailyDigest] = useState(null)
 
-  // Escalate modal state
-  const [escalateModalOpen, setEscalateModalOpen] = useState(false)
-  const [selectedClaimForAction, setSelectedClaimForAction] = useState(null)
-  const [escalationReason, setEscalationReason] = useState("")
-
   const loadData = async () => {
     setLoading(true)
     try {
-      const isAdminOrSenior = user?.role === "admin" || user?.role === "senior_adjuster"
       const [queueData, unassignedData, digestData] = await Promise.all([
         api.queue.getQueue(),
-        isAdminOrSenior ? api.queue.getUnassignedQueue().catch(() => []) : Promise.resolve([]),
+        isInsurer ? api.queue.getUnassignedQueue().catch(() => []) : Promise.resolve([]),
         user?.id ? api.queue.getAdjusterDailyDigest(user.id).catch(() => null) : Promise.resolve(null),
       ])
       setClaims(queueData || [])
@@ -81,27 +75,6 @@ export function AdjusterQueueView({ onSelectClaim }) {
     return () => clearInterval(interval)
   }, [user])
 
-  const handleEscalate = async () => {
-    if (!selectedClaimForAction) return
-    try {
-      await api.queue.escalateClaim(selectedClaimForAction.id, escalationReason)
-      toast({
-        title: "Claim Escalated",
-        description: `Claim ${selectedClaimForAction.claim_number} transferred to Senior Adjudication tier.`,
-        variant: "warning",
-      })
-      setEscalateModalOpen(false)
-      setEscalationReason("")
-      loadData()
-    } catch (err) {
-      toast({
-        title: "Escalation Failed",
-        description: err.message,
-        variant: "destructive",
-      })
-    }
-  }
-
   const displayedList = activeTab === "unassigned" ? unassignedClaims : claims
 
   const inReviewCount = displayedList.filter(
@@ -111,7 +84,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
     (c) => c.status === "auto_approved" || c.status === "approved"
   ).length
   const mismatchCount = displayedList.filter(
-    (c) => c.has_identity_mismatch || c.status === "escalated" || (c.flagged_items_count && c.flagged_items_count > 0)
+    (c) => c.has_identity_mismatch || (c.flagged_items_count && c.flagged_items_count > 0)
   ).length
 
   const filteredClaims = displayedList.filter((c) => {
@@ -131,7 +104,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
       return c.status === "auto_approved" || c.status === "approved"
     }
     if (statusFilter === "mismatch") {
-      return Boolean(c.has_identity_mismatch || c.status === "escalated" || (c.flagged_items_count && c.flagged_items_count > 0))
+      return Boolean(c.has_identity_mismatch || (c.flagged_items_count && c.flagged_items_count > 0))
     }
 
     return true
@@ -165,7 +138,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
 
           <div className="my-3">
             <div className="text-3xl font-extrabold tracking-tight text-white">{claims.length}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Assigned to your bench</div>
+            <div className="text-xs text-slate-400 mt-0.5">Active claims in your queue</div>
           </div>
 
           <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-300">
@@ -264,8 +237,9 @@ export function AdjusterQueueView({ onSelectClaim }) {
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                My Priority Queue ({claims.length})
+                Priority Queue ({claims.length})
               </button>
+              {isInsurer && (
               <button
                 onClick={() => setActiveTab("unassigned")}
                 className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
@@ -276,6 +250,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
               >
                 Unassigned Pool ({unassignedClaims.length})
               </button>
+              )}
             </div>
 
             {/* Sleek Pill Search */}
@@ -367,10 +342,14 @@ export function AdjusterQueueView({ onSelectClaim }) {
                       </td>
 
                       <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        <SLAUrgencyBadge
-                          slaDeadline={claim.sla_deadline}
-                          isBreached={claim.sla_breached}
-                        />
+                        {claim.status === "draft" ? (
+                          <span className="text-[11px] text-slate-500">Draft: starts on submission</span>
+                        ) : (
+                          <SLAUrgencyBadge
+                            slaDeadline={claim.sla_deadline}
+                            isBreached={claim.sla_breached}
+                          />
+                        )}
                       </td>
 
                       <td className="py-3 px-4">
@@ -406,8 +385,6 @@ export function AdjusterQueueView({ onSelectClaim }) {
                             variant={
                               claim.status === "approved"
                                 ? "lime"
-                                : claim.status === "escalated"
-                                ? "destructive"
                                 : claim.status === "queried"
                                 ? "warning"
                                 : "secondary"
@@ -426,21 +403,8 @@ export function AdjusterQueueView({ onSelectClaim }) {
                             onClick={() => handleSelect(claim.id)}
                             className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
                           >
-                            <span>Adjudicate</span>
+                            <span>Open</span>
                             <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
-                          </Button>
-
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setSelectedClaimForAction(claim)
-                              setEscalateModalOpen(true)
-                            }}
-                            className="rounded-full h-7.5 w-7.5 p-0 text-slate-400 hover:text-red-700 hover:bg-red-50"
-                            title="Escalate"
-                          >
-                            <AlertOctagon className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </td>
@@ -453,59 +417,6 @@ export function AdjusterQueueView({ onSelectClaim }) {
         </CardContent>
       </Card>
 
-      {/* Escalate Claim Modal */}
-      <Dialog open={escalateModalOpen} onOpenChange={setEscalateModalOpen}>
-        <DialogContent onClose={() => setEscalateModalOpen(false)}>
-          <DialogHeader>
-            <DialogTitle>Escalate Claim to Senior Adjuster</DialogTitle>
-            <DialogDescription>
-              Escalates claim {selectedClaimForAction?.claim_number} for medical audit review or high-value exception.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Reason for Escalation
-              </label>
-              <select
-                value={escalationReason}
-                onChange={(e) => setEscalationReason(e.target.value)}
-                className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-slate-900"
-              >
-                <option value="">Select a reason...</option>
-                <option value="Unbundled surgery charges exceeding policy sub-limits">
-                  Unbundled surgery charges exceeding sub-limit
-                </option>
-                <option value="Suspected billing upcoding & consumable inflation">
-                  Suspected billing upcoding & consumable inflation
-                </option>
-                <option value="Pre-existing disease disclosure discrepancy">
-                  Pre-existing disease disclosure discrepancy
-                </option>
-                <option value="Proportionate deduction calculation dispute">
-                  Proportionate deduction calculation dispute
-                </option>
-                <option value="Other high-value clinical complexity">Other high-value clinical complexity</option>
-              </select>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" className="rounded-full" onClick={() => setEscalateModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              className="rounded-full"
-              onClick={handleEscalate}
-              disabled={!escalationReason}
-            >
-              Confirm Escalation
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

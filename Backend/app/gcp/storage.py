@@ -148,6 +148,14 @@ async def generate_signed_url(object_key: str, expiry_minutes: int | None = None
     expiry = expiry_minutes or settings.GCS_SIGNED_URL_EXPIRY_MINUTES
 
     def _sign() -> str:
+        # Files that fell back to local disk at upload time are not in the bucket; signing a
+        # GCS URL for them would 404, so serve them inline (same order as download_as_bytes).
+        local_path = LOCAL_STORAGE_DIR / object_key
+        if local_path.exists():
+            mime = mimetypes.guess_type(local_path.name)[0] or "application/pdf"
+            b64 = base64.b64encode(local_path.read_bytes()).decode("utf-8")
+            return f"data:{mime};base64,{b64}"
+
         bucket = _get_bucket()
         if bucket is not None:
             try:
@@ -158,13 +166,7 @@ async def generate_signed_url(object_key: str, expiry_minutes: int | None = None
                     version="v4",
                 )
             except Exception as exc:
-                logger.warning("GCS signed URL generation failed (%s); using local data URI fallback", exc)
-
-        local_path = LOCAL_STORAGE_DIR / object_key
-        if local_path.exists():
-            mime = mimetypes.guess_type(local_path.name)[0] or "application/pdf"
-            b64 = base64.b64encode(local_path.read_bytes()).decode("utf-8")
-            return f"data:{mime};base64,{b64}"
+                logger.warning("GCS signed URL generation failed (%s)", exc)
 
         return f"/local-storage/{object_key}"
 

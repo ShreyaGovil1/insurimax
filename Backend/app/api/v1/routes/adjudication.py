@@ -10,7 +10,7 @@ POST   /claims/{claimId}/adjudication/finalize
 """
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.access import require_claim_access
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
@@ -36,6 +36,9 @@ async def run_adjudication(
     claim_id: uuid.UUID,
     db: DBSession,
     current_user: AdjusterOrAbove,
+    confirm_discard_overrides: bool = Query(
+        False, description="Required to re-run when adjusters have overridden line items"
+    ),
 ):
     """
     Trigger the Gemini adjudication pipeline for a claim.
@@ -48,9 +51,18 @@ async def run_adjudication(
       5. Persist per-line-item decisions with explanations and citations
       6. Auto-approve if confidence ≥ threshold AND amount ≤ limit
 
-    Can be re-run: existing line-item decisions are replaced.
+    Can be re-run: existing line-item decisions are replaced. Because that discards any
+    adjuster overrides, a re-run over overridden items is refused (409) unless
+    confirm_discard_overrides=true.
     """
     await require_claim_access(db, claim_id, current_user)
+    overridden = await adjudication_service.count_overridden_line_items(db, claim_id)
+    if overridden and not confirm_discard_overrides:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Re-running adjudication would discard {overridden} adjuster override(s); "
+            "confirm to proceed",
+        )
     try:
         result = await adjudication_service.run_adjudication(db, claim_id)
     except ValueError as exc:

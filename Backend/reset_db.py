@@ -10,7 +10,6 @@ Usage (from Backend/):
 
 Demo logins (password: Password@123):
     adjuster@insurimax.com          Adjuster          MediAssist TPA Services
-    senior.adjuster@insurimax.com   Senior Adjuster   MediAssist TPA Services
     admin@insurimax.com             Admin             MediAssist TPA Services
     hospital@insurimax.com          Hospital Desk     Apollo Hospital, Bannerghatta
 
@@ -39,7 +38,6 @@ DEMO_ORGS = [
 
 DEMO_USERS = [
     ("adjuster@insurimax.com", "Priya Sharma", UserRole.ADJUSTER, DEMO_ORGS[2][0]),
-    ("senior.adjuster@insurimax.com", "Rajesh Patel (Lead Adjuster)", UserRole.SENIOR_ADJUSTER, DEMO_ORGS[2][0]),
     ("admin@insurimax.com", "Vikram Seth (Operations Admin)", UserRole.ADMIN, DEMO_ORGS[0][0]),
     ("hospital@insurimax.com", "Sunita Rao (Apollo Billing)", UserRole.HOSPITAL_DESK, DEMO_ORGS[1][0]),
 ]

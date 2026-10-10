@@ -48,14 +48,19 @@ export function DocumentExtractionView({
   onRunAdjudication,
   onSwitchToAdjudication,
   runningPipeline = false,
+  hasAdjudication = false,
 }) {
   const { toast } = useToast()
   const { user } = useAuth()
   const role = user?.role
-  const isStaff = ["admin", "senior_adjuster", "adjuster"].includes(role)
+  const isStaff = ["admin", "adjuster"].includes(role)
   const isHospital = role === "hospital_desk"
-  const canUpload = isStaff || isHospital
   const [claim, setClaim] = useState(propClaim || null)
+  // Documents are the hospital's: only it adds them (until the claim is closed) and only it
+  // removes them, while the claim is still a draft. The insurer reviews them read-only.
+  const claimStatus = propClaim?.status ?? claim?.status
+  const canUpload = isHospital && !["finalized", "rejected"].includes(claimStatus)
+  const canDelete = isHospital && claimStatus === "draft"
   const [documents, setDocuments] = useState([])
   const [mergedData, setExtractedData] = useState(null)
   const [selectedDocId, setSelectedDocId] = useState(null)
@@ -383,14 +388,6 @@ export function DocumentExtractionView({
 
   return (
     <div className="space-y-6">
-      {role === "patient" && (
-        <Card className="border border-slate-200">
-          <CardContent className="p-8 text-center text-xs text-slate-500">
-            Claim documents are not available for patient accounts.
-          </CardContent>
-        </Card>
-      )}
-
       {/* Upload Box */}
       {canUpload && (
       <Card className="border border-slate-200 shadow-xs">
@@ -398,7 +395,7 @@ export function DocumentExtractionView({
           <CardTitle className="text-sm font-semibold flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Upload className="w-4 h-4 text-blue-600" />
-              <span>{isHospital ? "Upload Your Hospital Documents" : "Upload Hospital Bill & Medical Records"}</span>
+              <span>Upload Your Hospital Documents</span>
             </div>
             <span className="text-[11px] font-normal text-slate-500">
               PDF, JPG, PNG up to 50MB
@@ -450,7 +447,6 @@ export function DocumentExtractionView({
       )}
 
       {/* Uploaded Documents List */}
-      {role !== "patient" && (
       <Card className="border border-slate-200 shadow-xs">
         <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -464,7 +460,9 @@ export function DocumentExtractionView({
         <CardContent className="p-0">
           {documents.length === 0 ? (
             <div className="p-8 text-center text-slate-500 text-xs">
-              No documents uploaded yet for this claim. Upload a bill above to extract line items.
+              {isHospital
+                ? "No documents uploaded yet for this claim. Upload a bill above to extract line items."
+                : "The hospital has not attached any documents to this claim yet."}
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -535,16 +533,18 @@ export function DocumentExtractionView({
                       <span>Re-Extract</span>
                     </Button>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleDeleteDocument(doc)}
-                      className="h-7 text-[11px] gap-1.5 text-red-600 hover:bg-red-50 hover:border-red-200"
-                      title="Delete document"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span>Delete</span>
-                    </Button>
+                    {canDelete && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleDeleteDocument(doc)}
+                        className="h-7 text-[11px] gap-1.5 text-red-600 hover:bg-red-50 hover:border-red-200"
+                        title="Delete document"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -552,7 +552,6 @@ export function DocumentExtractionView({
           )}
         </CardContent>
       </Card>
-      )}
 
       {selectedDoc && (
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-xs">
@@ -592,7 +591,9 @@ export function DocumentExtractionView({
                 </span>
               </div>
               <h3 className="text-sm font-bold text-white">
-                Ready for AI Adjudication &amp; IRDAI Compliance Audit
+                {hasAdjudication
+                  ? "Already Adjudicated: Rerun Replaces the Current Decisions"
+                  : "Ready for AI Adjudication & IRDAI Compliance Audit"}
               </h3>
               <p className="text-xs text-blue-200/80 max-w-2xl leading-relaxed">
                 Gemini 1.5 Pro will evaluate every line item against policy clauses (room rent caps, co-pay, waiting periods) and flag IRDAI non-payable consumables.
@@ -603,7 +604,11 @@ export function DocumentExtractionView({
               <Button
                 onClick={handleRunAdjudicationAction}
                 disabled={isAdjudicating}
-                className="bg-[#A3FF12] hover:bg-[#8ee60e] text-slate-950 font-bold text-xs px-4 h-9 shadow-sm cursor-pointer gap-2 transition-all hover:scale-[1.02]"
+                className={`font-bold text-xs px-4 h-9 shadow-sm cursor-pointer gap-2 transition-all hover:scale-[1.02] ${
+                  hasAdjudication
+                    ? "bg-amber-400 hover:bg-amber-500 text-amber-950"
+                    : "bg-[#A3FF12] hover:bg-[#8ee60e] text-slate-950"
+                }`}
               >
                 {isAdjudicating ? (
                   <>
@@ -613,7 +618,7 @@ export function DocumentExtractionView({
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Run AI Adjudication</span>
+                    <span>{hasAdjudication ? "Rerun AI Adjudication" : "Run AI Adjudication"}</span>
                   </>
                 )}
               </Button>
