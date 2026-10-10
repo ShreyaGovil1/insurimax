@@ -50,6 +50,7 @@ async def run_adjudication(
 
     Can be re-run: existing line-item decisions are replaced.
     """
+    await require_claim_access(db, claim_id, current_user)
     try:
         result = await adjudication_service.run_adjudication(db, claim_id)
     except ValueError as exc:
@@ -165,6 +166,7 @@ async def override_line_item(
     - Logs the override reason for pattern learning and audit trail.
     - Automatically recalculates adjudication totals.
     """
+    await require_claim_access(db, claim_id, current_user)
     item = await adjudication_service.override_line_item(
         db, item_id, body, current_user.id
     )
@@ -192,6 +194,7 @@ async def finalize_adjudication(
     - Records the finalizing adjuster and timestamp
     - This is the compliance record — immutable after this point
     """
+    await require_claim_access(db, claim_id, current_user)
     adj = await adjudication_service.finalize_adjudication(
         db, claim_id, body, current_user.id
     )

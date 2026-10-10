@@ -215,6 +215,7 @@ async def assign_claim(
     current_user: AdminOrSenior,
 ):
     """Assign or reassign a claim to an adjuster."""
+    await require_claim_access(db, claim_id, current_user)
     claim = await claim_service.assign_adjuster(db, claim_id, adjuster_id)
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
@@ -233,6 +234,7 @@ async def escalate_claim(
     current_user: CurrentUser = None,
 ):
     """Escalate a claim to a senior adjuster."""
+    await require_claim_access(db, claim_id, current_user)
     update_data = ClaimStatusUpdate(
         status=ClaimStatus.ESCALATED,
         note=reason or "Escalated by adjuster",

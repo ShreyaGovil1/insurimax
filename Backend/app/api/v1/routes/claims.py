@@ -181,6 +181,7 @@ async def update_claim_status(
     current_user: AdjusterOrAbove,
 ):
     """Transition a claim to a new status (with audit history)."""
+    await require_claim_access(db, claim_id, current_user)
     claim = await claim_service.update_claim_status(db, claim_id, body, current_user.id)
     if not claim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")

@@ -398,7 +398,6 @@ async def run_adjudication_agent(
     candidate_models = [
         settings.GEMINI_MODEL,
         settings.GEMINI_FLASH_MODEL,
-        "gemini-1.5-flash",
     ]
     # Remove duplicate models while preserving order
     models_to_try = []

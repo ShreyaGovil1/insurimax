@@ -33,6 +33,7 @@ class ClaimStatus(str, enum.Enum):
     PARTIALLY_APPROVED = "partially_approved"
     REJECTED = "rejected"
     FINALIZED = "finalized"
+    STALE = "stale"               # legacy value kept so old status-history rows still load; not settable
 
 
 class Claim(Base):
