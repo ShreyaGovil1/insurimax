@@ -8,6 +8,7 @@ POST   /queries/{queryId}/respond
 PATCH  /queries/{queryId}/resolve
 
 GET    /queue
+GET    /queue/stats
 GET    /queue/unassigned
 POST   /queue/{claimId}/assign
 
@@ -177,6 +178,24 @@ async def get_queue(
             )
         )
     return summaries
+
+
+@router.get("/queue/stats")
+async def get_queue_stats(db: DBSession, current_user: CurrentUser):
+    """Headline metrics for the queue page, scoped exactly like GET /queue."""
+    hospital_org_id = None
+    if current_user.role == UserRole.HOSPITAL_DESK:
+        if current_user.org_id is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not linked to a hospital organization")
+        hospital_org_id = current_user.org_id
+    elif current_user.role not in STAFF_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+    return await analytics_service.get_queue_stats(
+        db,
+        hospital_org_id=hospital_org_id,
+        insurer_org_id=await insurer_scope(db, current_user),
+        exclude_drafts=hospital_org_id is None,
+    )
 
 
 @router.get("/queue/unassigned", response_model=list[ClaimSummary])

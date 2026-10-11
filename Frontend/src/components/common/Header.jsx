@@ -24,9 +24,9 @@ import { Badge } from "../ui/badge"
 const NAV_ITEMS = [
   { id: "queue", path: "/queue", label: "Queue", icon: Layers },
   { id: "claims", path: "/claims", label: "Claims", icon: FileSpreadsheet },
-  { id: "hospital", path: "/hospital", label: "Hospital", icon: Building2 },
-  { id: "patient", path: "/patient", label: "Patient", icon: UserCheck },
-  { id: "policies", path: "/policies", label: "Policies", icon: ShieldCheck },
+  // { id: "hospital", path: "/hospital", label: "Hospital", icon: Building2 },
+  // { id: "patient", path: "/patient", label: "Patient", icon: UserCheck },
+  // { id: "policies", path: "/policies", label: "Policies", icon: ShieldCheck },
   { id: "analytics", path: "/analytics", label: "Analytics & Audit", icon: Activity },
 ]
 

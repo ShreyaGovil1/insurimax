@@ -32,10 +32,12 @@ class SLAReport(BaseSchema):
     period_start: datetime
     period_end: datetime
     total_claims: int
-    resolved_within_sla: int
-    sla_breached: int
-    sla_compliance_rate: float
-    avg_resolution_minutes: float
+    resolved_within_sla: int        # finalized on or before the SLA deadline
+    sla_breached: int               # finalized late, or still open past the deadline
+    pending_within_sla: int         # still open, deadline not yet passed
+    finalized_claims: int
+    sla_compliance_rate: float | None   # met / (met + breached); None until any claim is decided
+    avg_resolution_minutes: float | None  # submit -> finalize, finalized claims only
 
 
 class AdjusterDailyDigest(BaseSchema):

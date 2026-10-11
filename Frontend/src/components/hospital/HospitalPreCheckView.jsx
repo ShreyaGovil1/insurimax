@@ -127,6 +127,10 @@ export function HospitalPreCheckView({ onClaimCreated }) {
   }
 
   const handleConvertToFormalClaim = async () => {
+    if (!window.confirm(
+      `Create a claim for ${form.patient_name || "this patient"}?\n\n` +
+      "SLA will begin after attaching the documents and submitting to the insurer."
+    )) return
     try {
       const insurers = await api.claims.listInsurers()
       const insurer = insurers.find((i) => i.name.toLowerCase() === (form.insurer_name || "").toLowerCase())
@@ -155,7 +159,7 @@ export function HospitalPreCheckView({ onClaimCreated }) {
       }
       toast({
         title: "Draft Claim Created",
-        description: `Claim ${newClaim.claim_number} saved as a draft${billAttached ? " with the audited bill attached" : ""}. Add any remaining documents, then submit it to the insurer to start the 3-hour SLA.`,
+        description: `Claim ${newClaim.claim_number} saved as a draft${billAttached ? " with the audited bill attached" : ""}. Attach the policy and the medical bill, then submit it to the insurer to start the 3-hour SLA.`,
         variant: "success",
       })
       if (onClaimCreated) onClaimCreated(newClaim)
@@ -456,7 +460,7 @@ export function HospitalPreCheckView({ onClaimCreated }) {
                     onClick={handleConvertToFormalClaim}
                     className="w-full h-11 rounded-full text-xs font-bold bg-[#A3FF12] hover:bg-[#8ee408] text-slate-950 gap-2 shadow-xs cursor-pointer"
                   >
-                    <span>Submit as Formal Claim (Start 3h SLA)</span>
+                    <span>Create Claim</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </Button>
                 </div>

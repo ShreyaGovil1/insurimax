@@ -41,6 +41,12 @@ import { ClaimQueriesView } from "../queries/ClaimQueriesView"
 
 const STAFF_ROLES = ["admin", "adjuster"]
 
+// Must match _REQUIRED_FOR_SUBMISSION in the backend claims routes
+const REQUIRED_FOR_SUBMISSION = [
+  { type: "policy_document", label: "policy document" },
+  { type: "itemized_bill", label: "medical bill" },
+]
+
 const OVERRIDE_REASON_LABELS = {
   upcoding_detected: "Upcoding detected",
   incorrect_policy_application: "Incorrect policy application",
@@ -222,6 +228,21 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
 
   // Hospital hands the draft to the insurer; this is what starts the SLA clock
   const handleSubmitClaim = async () => {
+    // Mirror the server rule up front so the hospital learns exactly what is missing
+    const docs = await api.documents.list(claimId).catch(() => null)
+    if (docs) {
+      const types = new Set(docs.map((d) => d.doc_type))
+      const missing = REQUIRED_FOR_SUBMISSION.filter((r) => !types.has(r.type)).map((r) => r.label)
+      if (missing.length) {
+        toast({
+          title: "Documents Missing",
+          description: `Attach the ${missing.join(" and the ")} before submitting the claim to the insurer.`,
+          variant: "destructive",
+        })
+        setActiveTab("documents")
+        return
+      }
+    }
     if (!window.confirm("Submit this claim to the insurer? The 3-hour SLA starts now and documents can no longer be deleted.")) return
     setSubmitting(true)
     try {
@@ -549,8 +570,8 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
           <div>
             <div className="font-bold">Draft: not yet visible to {claim?.insurer_name || "the insurer"}</div>
             <p className="mt-0.5 text-amber-800">
-              Attach all the documents for this claim on the documents tab, then click <strong>Submit to Insurer</strong>.
-              The 3-hour IRDAI SLA starts at submission.
+              Attach the documents for this claim on the documents tab (at least the <strong>policy document</strong> and
+              the <strong>medical bill</strong>), then click <strong>Submit to Insurer</strong>. The 3-hour IRDAI SLA starts at submission.
             </p>
           </div>
         </div>
