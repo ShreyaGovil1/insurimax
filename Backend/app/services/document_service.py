@@ -263,18 +263,28 @@ async def generate_signed_url_for_document(
     return signed_url, expires_at
 
 
+from app.models.claim import Claim
+
+
 async def is_document_owned_by(db: AsyncSession, doc: Document, user: User) -> bool:
-    """True if the document was uploaded by the user, or by someone in the user's organisation."""
-    if doc.uploaded_by_id is None:
+    """True if the document was uploaded by the user, or by someone in the user's organisation, or belongs to user's claim organisation."""
+    if user.org_id is None:
         return False
     if doc.uploaded_by_id == user.id:
         return True
-    if user.org_id is None:
-        return False
-    uploader = (
-        await db.execute(select(User).where(User.id == doc.uploaded_by_id))
-    ).scalar_one_or_none()
-    return bool(uploader and uploader.org_id == user.org_id)
+    if doc.claim_id:
+        claim_org = (
+            await db.execute(select(Claim.hospital_org_id).where(Claim.id == doc.claim_id))
+        ).scalar_one_or_none()
+        if claim_org and claim_org == user.org_id:
+            return True
+    if doc.uploaded_by_id is not None:
+        uploader = (
+            await db.execute(select(User).where(User.id == doc.uploaded_by_id))
+        ).scalar_one_or_none()
+        if uploader and uploader.org_id == user.org_id:
+            return True
+    return False
 
 
 async def get_document_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJob | None:

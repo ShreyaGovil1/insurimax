@@ -363,7 +363,7 @@ async def patch_document_extracted_data(
     Insurer staff can correct any time; the hospital only its own documents while the claim is a
     draft. Once submitted, the extraction is the insurer's evidence (same rule as re-extraction).
     """
-    await _authorized_document(db, claim_id, doc_id, current_user)
+    doc = await _authorized_document(db, claim_id, doc_id, current_user)
     if not _is_staff(current_user):
         claim = await claim_service.get_claim(db, claim_id)
         if current_user.role != UserRole.HOSPITAL_DESK or claim.status != ClaimStatus.DRAFT:
@@ -375,6 +375,19 @@ async def patch_document_extracted_data(
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No completed extraction for this document")
     job.corrected_payload = body.corrected_payload
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(job, "corrected_payload")
+
+    if doc.doc_type == DocumentType.ITEMIZED_BILL and isinstance(body.corrected_payload, dict):
+        bill_sum = body.corrected_payload.get("total_billed_inr")
+        if bill_sum is None and "line_items" in body.corrected_payload:
+            items = body.corrected_payload.get("line_items") or []
+            bill_sum = sum(float(i.get("total_price_inr") or 0) for i in items if isinstance(i, dict))
+        if bill_sum is not None:
+            claim_obj = await claim_service.get_claim(db, claim_id)
+            if claim_obj and claim_obj.status == ClaimStatus.DRAFT:
+                claim_obj.billed_amount = float(bill_sum)
+
     await db.flush()
     return {"message": "Extracted data updated", "job_id": str(job.id)}
 

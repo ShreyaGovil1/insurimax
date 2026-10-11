@@ -164,7 +164,7 @@ export default function App() {
               <Route path="claims/:claimId/:tab?" element={<AdjudicationCockpit />} />
               <Route path="hospital" element={<HospitalPreCheckView />} />
               <Route path="policies" element={<PolicyLibraryView />} />
-              <Route path="analytics" element={<AnalyticsComplianceView />} />
+              <Route path="analytics" element={<AdminRoute><AnalyticsComplianceView /></AdminRoute>} />
             </Route>
 
             {/* 404 / Catch-all Route */}

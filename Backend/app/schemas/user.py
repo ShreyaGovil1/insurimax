@@ -25,8 +25,10 @@ class OrganizationRead(BaseSchema):
     id: uuid.UUID
     name: str
     org_type: OrgType
-    gstin: str | None
-    contact_email: str | None
+    gstin: str | None = None
+    address: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
     is_active: bool
     created_at: datetime
 
@@ -46,6 +48,10 @@ class AdminOrganizationUpdate(BaseSchema):
     name: str | None = Field(None, min_length=2, max_length=255)
     org_type: OrgType | None = None
     is_active: bool | None = None
+    gstin: str | None = None
+    address: str | None = None
+    contact_email: EmailStr | None = None
+    contact_phone: str | None = None
 
 
 # ── User ──────────────────────────────────────────────────────────────────────
@@ -56,6 +62,7 @@ class UserCreate(BaseSchema):
     full_name: str = Field(..., min_length=2, max_length=255)
     role: UserRole = UserRole.ADJUSTER
     org_id: uuid.UUID | None = None
+    phone: str | None = None
 
     @field_validator("password")
     @classmethod
@@ -73,6 +80,7 @@ class UserRead(BaseSchema):
     email: str
     full_name: str
     role: UserRole
+    phone: str | None = None
     org_id: uuid.UUID | None
     is_active: bool
     is_verified: bool
@@ -83,6 +91,7 @@ class UserRead(BaseSchema):
 class UserUpdate(BaseSchema):
     full_name: str | None = None
     role: UserRole | None = None
+    phone: str | None = None
     is_active: bool | None = None
 
 
@@ -90,6 +99,7 @@ class AdminUserUpdate(BaseSchema):
     """Admin-only partial update of any user."""
     full_name: str | None = Field(None, min_length=2, max_length=255)
     role: UserRole | None = None
+    phone: str | None = None
     is_active: bool | None = None
     is_verified: bool | None = None
     org_id: uuid.UUID | None = None

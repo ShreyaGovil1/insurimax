@@ -39,6 +39,7 @@ async def create_user(db: AsyncSession, data: UserCreate) -> User:
         full_name=data.full_name,
         role=data.role,
         org_id=data.org_id,
+        phone=data.phone,
     )
     db.add(user)
     await db.flush()

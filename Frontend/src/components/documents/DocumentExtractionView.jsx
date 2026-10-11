@@ -283,9 +283,12 @@ export function DocumentExtractionView({
     try {
       await api.documents.patchDocumentExtraction(claimId, selectedDocId, corrected)
       setDocData(corrected)
-      if (isStaff) setExtractedData(await api.documents.getExtractedData(claimId).catch(() => mergedData))
+      if (isStaff) {
+        setExtractedData(await api.documents.getExtractedData(claimId).catch(() => mergedData))
+      }
       setEditingExtraction(false)
       toast({ title: "Corrections saved", description: "The extracted data was updated.", variant: "success" })
+      await loadDocData(selectedDocId)
     } catch (err) {
       toast({ title: "Save failed", description: err.message, variant: "destructive" })
     }

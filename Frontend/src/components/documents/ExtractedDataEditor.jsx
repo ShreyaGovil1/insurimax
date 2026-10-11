@@ -68,12 +68,18 @@ function FieldInput({ fieldKey, value, onChange, compact = false }) {
     )
   }
   if (kind === "number") {
+    const numVal =
+      value == null || value === ""
+        ? ""
+        : typeof value === "number"
+          ? value
+          : Number(String(value).replace(/[^0-9.-]/g, ""))
     return (
       <input
         type="number"
         step="any"
         className={cn(base, "figures text-right")}
-        value={value ?? ""}
+        value={Number.isNaN(numVal) ? "" : numVal}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
       />
     )
@@ -82,7 +88,7 @@ function FieldInput({ fieldKey, value, onChange, compact = false }) {
     <input
       type="text"
       className={base}
-      value={value ?? ""}
+      value={typeof value === "object" && value !== null ? JSON.stringify(value) : (value ?? "")}
       placeholder={kind === "date" ? "YYYY-MM-DD" : ""}
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
     />
@@ -216,7 +222,7 @@ function ObjectEditor({ value, onChange, path = [] }) {
         if (Array.isArray(v)) {
           const ofRecords = v.some(isPlainObject) || (v.length === 0 && ROW_TEMPLATES[k])
           return (
-            <div key={k} className="rounded-xl bg-surface p-4 shadow-card">
+            <div key={k} className="rounded-xl border border-line bg-surface p-4 shadow-card">
               {ofRecords ? (
                 <RowsEditor name={k} rows={v} onChange={(nv) => set(k, nv)} />
               ) : (
@@ -226,10 +232,10 @@ function ObjectEditor({ value, onChange, path = [] }) {
           )
         }
         return (
-          <fieldset key={k} className="rounded-xl bg-surface p-4 shadow-card">
-            <legend className="float-left mb-3 w-full text-small font-semibold text-ink">{humanize(k)}</legend>
+          <div key={k} className="rounded-xl border border-line bg-surface p-4 shadow-card">
+            <h4 className="mb-3 text-small font-semibold text-ink">{humanize(k)}</h4>
             <ObjectEditor value={v} onChange={(nv) => set(k, nv)} path={[...path, k]} />
-          </fieldset>
+          </div>
         )
       })}
     </div>
@@ -240,8 +246,8 @@ export function ExtractedDataEditor({ data, title, onSave, onCancel }) {
   const [draft, setDraft] = useState(() => structuredClone(data || {}))
   const [saving, setSaving] = useState(false)
 
-  const lineItems = Array.isArray(draft.line_items) ? draft.line_items : null
-  const lineSum = lineItems ? lineItems.reduce((acc, li) => acc + (Number(li.total_price_inr) || 0), 0) : 0
+  const lineItems = Array.isArray(draft.line_items) ? draft.line_items : Array.isArray(draft.items) ? draft.items : null
+  const lineSum = lineItems ? lineItems.reduce((acc, li) => acc + (Number(li.total_price_inr || li.total_amount || li.total_price) || 0), 0) : 0
 
   const handleSave = async () => {
     setSaving(true)
@@ -254,7 +260,7 @@ export function ExtractedDataEditor({ data, title, onSave, onCancel }) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onCancel()}>
-      <DialogContent onClose={onCancel} className="flex max-h-[92dvh] flex-col bg-ground p-0 sm:max-w-6xl">
+      <DialogContent onClose={onCancel} className="flex max-h-[92dvh] w-full flex-col bg-ground p-0 sm:max-w-6xl">
         <div className="border-b border-line bg-surface px-5 py-4 pr-14 sm:rounded-t-[18px]">
           <DialogTitle className="text-body">{title || "Edit extracted data"}</DialogTitle>
           <DialogDescription className="text-small">

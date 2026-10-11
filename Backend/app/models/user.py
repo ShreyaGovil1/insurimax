@@ -82,6 +82,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role_enum"), nullable=False, default=UserRole.ADJUSTER
     )
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     org_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True

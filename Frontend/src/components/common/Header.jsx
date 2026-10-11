@@ -8,12 +8,12 @@ import { Avatar } from "../ui/avatar"
 import { BrandLockup } from "./BrandMark"
 import { cn } from "../../lib/utils"
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { id: "queue", path: "/queue", label: "Queue", hospitalLabel: "Desk", icon: Inbox },
   { id: "claims", path: "/claims", label: "Claims", icon: FileStack },
-  { id: "analytics", path: "/analytics", label: "Analytics & audit", icon: Activity },
 ]
 
+const ANALYTICS_NAV_ITEM = { id: "analytics", path: "/analytics", label: "Analytics & audit", icon: Activity }
 const ADMIN_NAV_ITEM = { id: "admin", path: "/admin", label: "Admin", icon: Settings }
 
 const ROLE_OPTIONS = [
@@ -32,7 +32,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
   const menuRef = useRef(null)
 
   const isHospital = user?.role === "hospital_desk"
-  const navItems = user?.role === "admin" ? [ADMIN_NAV_ITEM, ...NAV_ITEMS] : NAV_ITEMS
+  const navItems = user?.role === "admin" ? [ADMIN_NAV_ITEM, ...BASE_NAV_ITEMS, ANALYTICS_NAV_ITEM] : BASE_NAV_ITEMS
   const roleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
 
   useEffect(() => {

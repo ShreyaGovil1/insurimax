@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Building2, KeyRound, Plus, Search, UserCheck, Users, UserX, Power } from "lucide-react"
+import { Building2, KeyRound, MoreVertical, Plus, Power, Search, UserCheck, Users, UserX } from "lucide-react"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
 import { cn, formatRelative } from "../../lib/utils"
@@ -30,7 +30,7 @@ const ORG_TYPES = [
 ]
 const EMPTY_ORG = { name: "", org_type: "tpa", gstin: "", contact_email: "", contact_phone: "", address: "" }
 
-const EMPTY_FORM = { email: "", full_name: "", password: "", role: "adjuster", org_id: "" }
+const EMPTY_FORM = { email: "", full_name: "", password: "", role: "adjuster", org_id: "", phone: "" }
 
 export function AdminPanelView() {
   const { user: me } = useAuth()
@@ -50,6 +50,27 @@ export function AdminPanelView() {
   const [resetTarget, setResetTarget] = useState(null)
   const [newPassword, setNewPassword] = useState("")
   const [saving, setSaving] = useState(false)
+  const [menuUserId, setMenuUserId] = useState(null)
+
+  useEffect(() => {
+    if (!menuUserId) return
+    const handleClickOutside = (e) => {
+      if (!e.target.closest("[data-actions-menu]")) {
+        setMenuUserId(null)
+      }
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setMenuUserId(null)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [menuUserId])
 
   const fail = (err) => {
     const detail = err?.data?.detail
@@ -111,7 +132,7 @@ export function AdminPanelView() {
     e.preventDefault()
     setSaving(true)
     try {
-      await api.admin.createUser({ ...form, org_id: form.org_id || null })
+      await api.admin.createUser({ ...form, org_id: form.org_id || null, phone: form.phone || null })
       toast({ title: "User added", description: form.email, variant: "success" })
       setCreateOpen(false)
       setForm(EMPTY_FORM)
@@ -259,11 +280,12 @@ export function AdminPanelView() {
           ) : users.length === 0 ? (
             <EmptyState icon={Users} title="No users match" description="Try a different name, role or status." />
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto min-h-[220px]">
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-line text-left text-small font-semibold text-ink-3">
                     <th className="py-2.5 pl-5 pr-3 font-semibold">Person</th>
+                    <th className="px-3 py-2.5 font-semibold">Contact</th>
                     <th className="px-3 py-2.5 font-semibold">Role</th>
                     <th className="px-3 py-2.5 font-semibold">Organisation</th>
                     <th className="px-3 py-2.5 font-semibold">Status</th>
@@ -272,8 +294,9 @@ export function AdminPanelView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {users.map((u) => {
+                  {users.map((u, index) => {
                     const isSelf = u.id === me?.id
+                    const openUpwards = index >= users.length - 2 && users.length > 2
                     return (
                       <tr key={u.id} className={cn("transition-colors hover:bg-ground/60", !u.is_active && "opacity-70")}>
                         <td className="py-3 pl-5 pr-3">
@@ -284,13 +307,16 @@ export function AdminPanelView() {
                                 <span className="truncate">{u.full_name}</span>
                                 {isSelf && <Badge variant="peacock">You</Badge>}
                               </div>
-                              <div className="truncate text-small text-ink-3">{u.email}</div>
                             </div>
                           </div>
                         </td>
+                        <td className="px-3 py-3 text-small text-ink-2">
+                          <div className="truncate">{u.email}</div>
+                          {u.phone && <div className="text-tiny text-ink-3">{u.phone}</div>}
+                        </td>
                         <td className="px-3 py-3">
                           <Select
-                            className="h-8 w-40 text-small"
+                            className="h-8 w-36 text-small"
                             aria-label={`Role for ${u.full_name}`}
                             value={u.role}
                             disabled={isSelf}
@@ -306,7 +332,7 @@ export function AdminPanelView() {
                         </td>
                         <td className="px-3 py-3">
                           <Select
-                            className="h-8 w-52 text-small"
+                            className="h-8 w-44 text-small"
                             aria-label={`Organisation for ${u.full_name}`}
                             value={u.org_id || ""}
                             title={orgName(u.org_id) || "No organisation"}
@@ -327,20 +353,66 @@ export function AdminPanelView() {
                           {u.last_login_at ? formatRelative(u.last_login_at) : "Never"}
                         </td>
                         <td className="whitespace-nowrap py-3 pl-3 pr-5 text-right">
-                          <div className="inline-flex items-center gap-1.5">
-                            <Button size="sm" variant="ghost" onClick={() => setResetTarget(u)}>
-                              <KeyRound className="h-3.5 w-3.5" />
-                              Reset password
-                            </Button>
+                          <div className="relative inline-block text-left" data-actions-menu>
                             <Button
-                              size="sm"
-                              variant={u.is_active ? "danger-soft" : "secondary"}
-                              disabled={isSelf}
-                              onClick={() => updateUser(u, { is_active: !u.is_active }, u.is_active ? "User deactivated" : "User activated")}
+                              size="icon-sm"
+                              variant="ghost"
+                              aria-label={`Actions for ${u.full_name}`}
+                              aria-haspopup="true"
+                              aria-expanded={menuUserId === u.id}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setMenuUserId((prev) => (prev === u.id ? null : u.id))
+                              }}
                             >
-                              <Power className="h-3.5 w-3.5" />
-                              {u.is_active ? "Deactivate" : "Activate"}
+                              <MoreVertical className="h-4 w-4" />
                             </Button>
+                            {menuUserId === u.id && (
+                              <div
+                                role="menu"
+                                aria-orientation="vertical"
+                                className={cn(
+                                  "absolute right-0 z-30 w-44 rounded-xl border border-line bg-surface p-1 shadow-raised animate-scale-in",
+                                  openUpwards ? "bottom-full mb-1 origin-bottom-right" : "top-full mt-1 origin-top-right"
+                                )}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-small font-medium text-ink transition-colors hover:bg-ground text-left"
+                                  onClick={() => {
+                                    setMenuUserId(null)
+                                    setResetTarget(u)
+                                  }}
+                                >
+                                  <KeyRound className="h-4 w-4 text-ink-3" />
+                                  Reset password
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={isSelf}
+                                  title={isSelf ? "You cannot deactivate your own account" : undefined}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-small font-medium transition-colors text-left disabled:pointer-events-none disabled:opacity-45",
+                                    u.is_active
+                                      ? "text-vermilion-700 hover:bg-vermilion-50"
+                                      : "text-leaf-700 hover:bg-leaf-50"
+                                  )}
+                                  onClick={() => {
+                                    setMenuUserId(null)
+                                    updateUser(
+                                      u,
+                                      { is_active: !u.is_active },
+                                      u.is_active ? "User deactivated" : "User activated"
+                                    )
+                                  }}
+                                >
+                                  <Power className="h-4 w-4" />
+                                  {u.is_active ? "Deactivate" : "Activate"}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -410,7 +482,11 @@ export function AdminPanelView() {
                           ))}
                         </Select>
                       </td>
-                      <td className="px-3 py-3 text-small text-ink-2">{o.contact_email || <span className="text-ink-4">—</span>}</td>
+                      <td className="px-3 py-3 text-small text-ink-2">
+                        {o.contact_email && <div className="truncate">{o.contact_email}</div>}
+                        {o.contact_phone && <div className="text-tiny text-ink-3">{o.contact_phone}</div>}
+                        {!o.contact_email && !o.contact_phone && <span className="text-ink-4">—</span>}
+                      </td>
                       <td className="px-3 py-3">
                         <Badge variant={o.is_active ? "leaf" : "vermilion"}>{o.is_active ? "Active" : "Inactive"}</Badge>
                       </td>
@@ -447,6 +523,9 @@ export function AdminPanelView() {
               </Field>
               <Field label="Work email" htmlFor="u-email" required className="sm:col-span-2">
                 <Input id="u-email" required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </Field>
+              <Field label="Contact phone" htmlFor="u-phone" optional className="sm:col-span-2">
+                <Input id="u-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+91 98765 43210" />
               </Field>
               <Field label="Temporary password" htmlFor="u-pass" required hint="At least 8 characters" className="sm:col-span-2">
                 <Input id="u-pass" required type="password" minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
