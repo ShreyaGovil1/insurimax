@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import { useState } from "react"
 import {
   BrowserRouter,
   Routes,
@@ -21,6 +21,7 @@ import { AnalyticsComplianceView } from "./components/analytics/AnalyticsComplia
 import { PatientStatusView } from "./components/patient/PatientStatusView"
 import { AdminPanelView } from "./components/admin/AdminPanelView"
 import { ClaimCreateModal } from "./components/claims/ClaimCreateModal"
+import { BrandMark } from "./components/common/BrandMark"
 
 /**
  * Route guard: Redirects to /login if unauthenticated, preserving intended location
@@ -31,8 +32,9 @@ function ProtectedRoute({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F4F5F7] text-slate-500 text-xs font-semibold">
-        Loading InsuriMax Adjudication Engine...
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-ground" role="status">
+        <BrandMark className="h-11 w-11 animate-pulse" />
+        <span className="text-sm font-medium text-ink-3">Opening your workspace…</span>
       </div>
     )
   }
@@ -93,10 +95,16 @@ function AppLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F5F7] flex flex-col">
+    <div className="flex min-h-dvh flex-col bg-ground">
+      <a
+        href="#main"
+        className="sr-only z-50 rounded-lg bg-surface px-3 py-2 text-sm font-semibold text-ink shadow-raised focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
+      >
+        Skip to content
+      </a>
       <Header onNewClaim={() => setCreateClaimOpen(true)} />
 
-      <main className="flex-1 pb-12">
+      <main id="main" className="flex-1 pb-16">
         <Outlet context={{ openCreateClaim: () => setCreateClaimOpen(true) }} />
       </main>
 

@@ -1,35 +1,32 @@
-import React, { useState, useEffect } from "react"
+import { useState, useEffect } from "react"
 import {
-  Search,
-  Clock,
-  CheckCircle2,
   AlertCircle,
-  Bell,
   ArrowRight,
+  Bell,
+  Building2,
+  Check,
+  Clock,
+  Copy,
   ExternalLink,
+  FileText,
+  Loader2,
   PhoneCall,
   Scale,
+  Search,
   ShieldCheck,
-  Copy,
-  Check,
-  Building2,
-  AlertTriangle,
-  Zap,
-  Info,
-  ChevronRight,
-  FileText,
-  Bot,
   Sparkles,
-  Loader2,
+  Zap,
 } from "lucide-react"
 import { useParams, useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
-import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
+import { cn, formatCurrencyINR, formatDateTime } from "../../lib/utils"
 import { Button } from "../ui/button"
-import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+import { Field } from "../ui/field"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
+import { Guilloche } from "../common/Guilloche"
+import { JourneyRail } from "../common/JourneyRail"
 
 const SAMPLE_CLAIMS = [
   {
@@ -299,12 +296,8 @@ const generateBimaBharosaScript = (payload) => {
 
 export function PatientStatusView() {
   const { toast } = useToast()
-  let params = {}
-  let navigate = () => {}
-  try {
-    params = useParams() || {}
-    navigate = useNavigate()
-  } catch {}
+  const params = useParams()
+  const navigate = useNavigate()
 
   const urlClaimId = params.claimId || ""
   const [claimIdInput, setClaimIdInput] = useState(urlClaimId || SAMPLE_CLAIMS[0].id)
@@ -543,7 +536,7 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
   const handleSearch = (e) => {
     e.preventDefault()
     if (!claimIdInput.trim()) return
-    if (navigate) navigate(`/patient/${claimIdInput.trim()}`)
+    navigate(`/patient/${claimIdInput.trim()}`)
     fetchStatus(claimIdInput.trim())
   }
 
@@ -621,245 +614,182 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
 
   const currentStepIdx = claimStatus ? getStepIndex(claimStatus.status) : 1
   const selectedStuckItem = STUCK_SCENARIOS.find((s) => s.id === activeIssue) || STUCK_SCENARIOS[0]
+  const statusHeadline =
+    claimStatus?.status === "approved" || claimStatus?.status === "auto_approved"
+      ? "Cashless approved"
+      : claimStatus?.status === "queried"
+        ? "Waiting on your doctor's notes"
+        : claimStatus?.status === "finalized"
+          ? "Bill settled"
+          : "Under active insurer review"
+  const journeySteps = PROGRESS_STEPS.map((step, idx) => ({
+    key: step.key,
+    label: step.label,
+    caption: step.desc,
+    state: idx < currentStepIdx || (claimStatus?.status === "finalized" && idx === currentStepIdx) ? "done" : idx === currentStepIdx ? "current" : "todo",
+  }))
+  const formattedNotice = selectedStuckItem.noticeText
+    .replace("{CLAIM_ID}", claimStatus?.claim_number || "CLM-2026-8821")
+    .replace("{POLICY_NO}", claimStatus?.policy_number || "POL-STAR-7731")
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-24 text-slate-900">
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* TOP BAR: Clean, Friendly Header                                            */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-100 shadow-xs">
-        <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-lime-100 text-slate-900 text-xs font-bold mb-2">
-            <span className="w-2 h-2 rounded-full bg-lime-500 animate-pulse" />
-            Patient Help Centre & Live Tracker
+    <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 pb-24 sm:px-6 sm:py-10">
+      {/* Track */}
+      <section className="relative overflow-hidden rounded-[20px] bg-peacock-800 text-white shadow-raised">
+        <Guilloche className="absolute inset-x-0 -bottom-16 h-[220px] w-full" lines={20} strokeClassName="stroke-peacock-300/[0.12]" />
+        <div className="relative p-6 sm:p-10">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+            <div className="max-w-xl">
+              <h1 className="text-[30px] font-semibold leading-tight tracking-[-0.02em] sm:text-[38px]">Track your cashless claim</h1>
+              <p className="mt-2 text-body text-peacock-100/85">
+                See where your hospital claim stands, what the insurer pays, and what to do if it's taking too long.
+              </p>
+            </div>
+            <a
+              href="tel:1800-425-2255"
+              className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-white/10 px-4 py-2.5 text-small font-semibold ring-1 ring-inset ring-white/15 transition-colors hover:bg-white/15"
+            >
+              <PhoneCall className="h-4 w-4 text-marigold-300" />
+              24x7 helpline 1800-425-2255
+            </a>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Cashless Hospitalisation
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Check your live claim status, know your rights, and get unstuck if delayed.
-          </p>
-        </div>
 
-        <a
-          href="tel:1800-425-2255"
-          className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-transform hover:scale-102 self-start sm:self-auto"
-        >
-          <PhoneCall className="w-4 h-4 text-lime-400" />
-          <span>24x7 Helpline: 1800-425-2255</span>
-        </a>
-      </div>
-
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* 1. LIVE STATUS OF APPLICATION                                              */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-100 shadow-xs space-y-6">
-        {/* Search & Sample Pickers */}
-        <div className="space-y-3">
-          <form onSubmit={handleSearch} className="flex gap-2">
+          <form onSubmit={handleSearch} className="mt-7 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-3" />
               <Input
                 type="text"
-                placeholder="Enter Claim Number (e.g. CLM-2026-8821)..."
+                aria-label="Claim number"
+                placeholder="Enter your claim number, e.g. CLM-2026-8821"
                 value={claimIdInput}
                 onChange={(e) => setClaimIdInput(e.target.value)}
-                className="pl-10 h-12 bg-slate-50 border-slate-200 text-sm rounded-xl"
+                className="h-13 rounded-xl pl-12 text-body ring-0"
               />
             </div>
-            <Button
-              type="submit"
-              disabled={loading}
-              className="h-12 px-6 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm cursor-pointer"
-            >
-              {loading ? "Checking..." : "Track"}
+            <Button type="submit" variant="proceed" size="lg" loading={loading} className="h-13 px-6">
+              {loading ? "Checking…" : "Track claim"}
+              {!loading && <ArrowRight className="h-4 w-4" />}
             </Button>
           </form>
 
-          {/* Quick select pills */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-400 font-medium">Try sample:</span>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-small">
+            <span className="text-peacock-200">Try a sample:</span>
             {SAMPLE_CLAIMS.map((c) => (
               <button
                 key={c.id}
                 type="button"
                 onClick={() => {
                   setClaimIdInput(c.id)
-                  if (navigate) navigate(`/patient/${c.id}`)
+                  navigate(`/patient/${c.id}`)
                   fetchStatus(c.id)
                 }}
-                className={`px-3 py-1 rounded-full font-semibold transition-all cursor-pointer ${
-                  claimIdInput === c.id
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
+                className={cn(
+                  "cursor-pointer rounded-full px-3 py-1 font-semibold transition-colors",
+                  claimIdInput === c.id ? "bg-white text-peacock-800" : "bg-white/10 text-peacock-100 hover:bg-white/15"
+                )}
               >
                 {c.label}
               </button>
             ))}
           </div>
         </div>
+      </section>
 
-        {notFound ? (
-          <div className="p-8 text-center bg-rose-50 rounded-2xl border border-rose-100">
-            <AlertCircle className="w-8 h-8 text-rose-500 mx-auto mb-2" />
-            <div className="font-bold text-slate-900 text-base">Claim Not Found</div>
-            <div className="text-xs text-slate-500 mt-1">
-              Please double check the claim ID or click one of the sample buttons above.
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6 pt-2">
-            {/* Top Claim Card Row */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-slate-50 border border-slate-100">
-              <div>
-                <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-                  <span>Claim #{claimStatus?.claim_number || "CLM-2026-8821"}</span>
-                  <span>•</span>
-                  <span>Policy #{claimStatus?.policy_number || "POL-STAR-7731"}</span>
-                </div>
-                <div className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
-                  {claimStatus?.patient_name || "Ramesh Chawla"}
-                </div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  Hospital: <strong className="text-slate-700">{claimStatus?.hospital_name || "Apollo Hospital"}</strong> • Insurer: <strong className="text-slate-700">{claimStatus?.insurer_name || "Star Health"}</strong>
-                </div>
+      {/* Status */}
+      {notFound ? (
+        <section className="flex flex-col items-center rounded-card bg-surface px-6 py-12 text-center shadow-card">
+          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-vermilion-50 text-vermilion-600">
+            <AlertCircle className="h-6 w-6" />
+          </span>
+          <h2 className="text-lg font-semibold text-ink">We couldn't find that claim</h2>
+          <p className="mt-1 max-w-sm text-sm text-ink-3">Check the claim number on your hospital intimation slip, or try one of the samples above.</p>
+        </section>
+      ) : (
+        <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Claim status">
+          <div className="flex flex-col gap-4 p-5 sm:p-7 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-small text-ink-3">
+                <span>Claim {claimStatus?.claim_number || "CLM-2026-8821"}</span>
+                <span>Policy {claimStatus?.policy_number || "POL-STAR-7731"}</span>
               </div>
-
-              <div className="flex flex-col sm:flex-row md:flex-col items-start md:items-end gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  {claimStatus?.status === "approved" || claimStatus?.status === "auto_approved"
-                    ? "Cashless Approved"
-                    : claimStatus?.status === "queried"
-                    ? "Action Required from Doctor"
-                    : "Under Active Insurer Review"}
+              <div className="mt-1 text-[26px] font-semibold leading-tight tracking-[-0.02em] text-ink">{claimStatus?.patient_name || "Ramesh Chawla"}</div>
+              <div className="mt-1 text-sm text-ink-3">
+                {claimStatus?.hospital_name || "Apollo Hospital"} <span className="text-ink-4">→</span> {claimStatus?.insurer_name || "Star Health"}
+              </div>
+            </div>
+            <div className="flex flex-col items-start gap-2 md:items-end">
+              <span className="inline-flex items-center gap-2 rounded-full bg-leaf-50 px-3.5 py-1.5 text-sm font-semibold text-leaf-800 ring-1 ring-inset ring-leaf-100">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inset-0 rounded-full bg-leaf-500 animate-beacon" />
+                  <span className="relative h-2 w-2 rounded-full bg-leaf-500" />
                 </span>
-
-                <div className="text-xs font-semibold text-slate-600 flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                  <Clock className="w-3.5 h-3.5 text-amber-500" />
-                  <span>
-                    {claimStatus?.sla_breached
-                      ? "3-Hour SLA Breached (Insurer pays extra room rent)"
-                      : "Within Statutory 3-Hour Discharge Window"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Visual Stepper */}
-            <div>
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-                Live Progress
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                {PROGRESS_STEPS.map((step, idx) => {
-                  const isDone = idx < currentStepIdx
-                  const isCurrent = idx === currentStepIdx
-                  return (
-                    <div
-                      key={step.key}
-                      className={`p-3.5 rounded-2xl border transition-all ${
-                        isCurrent
-                          ? "bg-slate-900 text-white border-slate-900 shadow-md"
-                          : isDone
-                          ? "bg-emerald-50 text-emerald-900 border-emerald-200"
-                          : "bg-slate-50 text-slate-400 border-slate-100"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[11px] font-bold opacity-75">Step 0{step.step}</span>
-                        {isDone ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        ) : isCurrent ? (
-                          <span className="w-2 h-2 rounded-full bg-lime-400 animate-ping" />
-                        ) : (
-                          <span className="w-2 h-2 rounded-full bg-slate-300" />
-                        )}
-                      </div>
-                      <div className="text-xs font-bold">{step.label}</div>
-                      <div className="text-[11px] opacity-80 mt-0.5 line-clamp-1">{step.desc}</div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* 3 Large Clear Financial Figures */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                <div className="text-xs font-semibold text-slate-500">Total Hospital Bill</div>
-                <div className="text-2xl font-black text-slate-900 mt-1">
-                  {formatCurrencyINR(claimStatus?.billed_amount || 185000)}
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">Submitted by hospital billing</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100">
-                <div className="text-xs font-semibold text-emerald-800">Paid by Insurer (Cashless)</div>
-                <div className="text-2xl font-black text-emerald-600 mt-1">
-                  {formatCurrencyINR(claimStatus?.approved_amount || 155000)}
-                </div>
-                <div className="text-[11px] text-emerald-700 mt-0.5">Approved without out-of-pocket</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100">
-                <div className="text-xs font-semibold text-amber-800">Your Share (Non-Medical)</div>
-                <div className="text-2xl font-black text-amber-700 mt-1">
-                  {formatCurrencyINR(claimStatus?.deducted_amount || 30000)}
-                </div>
-                <div className="text-[11px] text-amber-700 mt-0.5">Gloves, food, room rent cap delta</div>
-              </div>
-            </div>
-
-            {/* Secondary Action Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <span className="text-xs text-slate-400">
-                Live as of {formatDateTime(new Date().toISOString())}
+                {statusHeadline}
               </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCisModalOpen(true)}
-                  className="rounded-xl text-xs font-bold cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5 mr-1" />
-                  View Policy Coverage (CIS)
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => setAlertModalOpen(true)}
-                  className="rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white cursor-pointer"
-                >
-                  <Bell className="w-3.5 h-3.5 mr-1 text-lime-400" />
-                  Get Free SMS Updates
-                </Button>
-              </div>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 text-small font-medium",
+                  claimStatus?.sla_breached ? "text-vermilion-700" : "text-ink-3"
+                )}
+              >
+                <Clock className="h-4 w-4" />
+                {claimStatus?.sla_breached ? "3-hour limit crossed: extra room rent is the insurer's to pay" : "Within the 3-hour discharge window"}
+              </span>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* 2. STATUTORY RIGHTS & EMERGENCY ASSISTANCE (CONSOLIDATED)                  */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-100 shadow-xs space-y-6">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-bold mb-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            IRDAI Protected Rights &amp; Immediate Action
+          <div className="border-t border-line px-5 py-6 sm:px-7">
+            <div className="hidden sm:block">
+              <JourneyRail steps={journeySteps} size="lg" label="Claim progress" />
+            </div>
+            <div className="sm:hidden">
+              <JourneyRail steps={journeySteps} orientation="vertical" label="Claim progress" />
+            </div>
           </div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900">
-            Hospital Assistance &amp; Statutory Rights
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Tap your situation below for an immediate legal remedy, ready-to-send notice, or 1-click regulatory escalation.
+
+          <dl className="grid border-t border-line sm:grid-cols-3">
+            <div className="p-5 sm:p-6">
+              <dt className="text-small font-medium text-ink-3">Hospital bill</dt>
+              <dd className="figures mt-1 text-[26px] font-semibold tracking-[-0.02em] text-ink">{formatCurrencyINR(claimStatus?.billed_amount || 185000)}</dd>
+              <dd className="text-tiny text-ink-3">Submitted by the hospital billing desk</dd>
+            </div>
+            <div className="border-t border-line bg-leaf-50/60 p-5 sm:border-l sm:border-t-0 sm:p-6">
+              <dt className="text-small font-medium text-leaf-800">Insurer pays (cashless)</dt>
+              <dd className="figures mt-1 text-[26px] font-semibold tracking-[-0.02em] text-leaf-700">{formatCurrencyINR(claimStatus?.approved_amount || 155000)}</dd>
+              <dd className="text-tiny text-leaf-800/80">Paid directly to the hospital</dd>
+            </div>
+            <div className="border-t border-line p-5 sm:border-l sm:border-t-0 sm:p-6">
+              <dt className="text-small font-medium text-ink-3">Your share</dt>
+              <dd className="figures mt-1 text-[26px] font-semibold tracking-[-0.02em] text-sand-700">{formatCurrencyINR(claimStatus?.deducted_amount || 30000)}</dd>
+              <dd className="text-tiny text-ink-3">Gloves, food, room rent above your plan's limit</dd>
+            </div>
+          </dl>
+
+          <div className="flex flex-col gap-3 border-t border-line bg-ground/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+            <span className="text-small text-ink-3">Live as of {formatDateTime(new Date().toISOString())}</span>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setCisModalOpen(true)}>
+                <FileText className="h-4 w-4" />
+                What my policy covers
+              </Button>
+              <Button size="sm" onClick={() => setAlertModalOpen(true)}>
+                <Bell className="h-4 w-4" />
+                Get SMS updates
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Rights */}
+      <section className="space-y-5" aria-label="Your rights at the hospital">
+        <div>
+          <h2 className="text-[24px] font-semibold tracking-[-0.02em] text-ink">Stuck at the hospital? Know your rights</h2>
+          <p className="mt-1 max-w-2xl text-sm text-ink-3">
+            Pick what's happening. You'll get the rule that protects you, what to do right now, and a notice you can send.
           </p>
         </div>
 
-        {/* 4 Clickable Statutory Situation Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" role="radiogroup" aria-label="What's happening">
           {STUCK_SCENARIOS.map((item) => {
             const Icon = item.icon
             const isSelected = activeIssue === item.id
@@ -867,474 +797,225 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
               <button
                 key={item.id}
                 type="button"
+                role="radio"
+                aria-checked={isSelected}
                 onClick={() => setActiveIssue(item.id)}
-                className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                  isSelected
-                    ? "bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-lime-400/40 scale-101"
-                    : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800"
-                }`}
+                className={cn(
+                  "flex cursor-pointer flex-col justify-between gap-3 rounded-card p-4 text-left transition-[background-color,box-shadow,transform] duration-200 active:scale-[0.98]",
+                  isSelected ? "bg-peacock-800 text-white shadow-raised" : "bg-surface text-ink shadow-card hover:shadow-raised"
+                )}
               >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                        isSelected ? "bg-white/10 text-lime-400" : "bg-white text-slate-700 shadow-2xs"
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
-                        isSelected
-                          ? "bg-lime-400/20 text-lime-300 border border-lime-400/30"
-                          : "bg-emerald-100 text-emerald-800"
-                      }`}
-                    >
-                      {item.pill}
-                    </span>
-                  </div>
-                  <div className="font-bold text-xs leading-snug">{item.title}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={cn("flex h-9 w-9 items-center justify-center rounded-xl", isSelected ? "bg-white/10 text-marigold-300" : "bg-peacock-50 text-peacock-600")}>
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-tiny font-semibold", isSelected ? "bg-marigold-400 text-ink" : "bg-sunken text-ink-2")}>{item.pill}</span>
                 </div>
-                <div
-                  className={`text-[11px] mt-2 line-clamp-1 ${
-                    isSelected ? "text-slate-300" : "text-slate-500"
-                  }`}
-                >
-                  {item.subtitle}
+                <div>
+                  <div className="text-sm font-semibold leading-snug">{item.title}</div>
+                  <div className={cn("mt-0.5 text-small", isSelected ? "text-peacock-100/80" : "text-ink-3")}>{item.subtitle}</div>
                 </div>
               </button>
             )
           })}
         </div>
 
-        {/* Selected Issue Detail & Clear Action */}
-        <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-200">
+        <div key={selectedStuckItem.id} className="grid animate-rise gap-5 rounded-card bg-surface p-5 shadow-card sm:p-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="space-y-5">
             <div>
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Statutory Legal Rule:
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-leaf-50 px-2.5 py-1 text-tiny font-semibold text-leaf-800">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                IRDAI protected
               </span>
-              <div className="text-sm font-bold text-slate-900 mt-0.5">
-                {selectedStuckItem.rule}
-              </div>
+              <p className="mt-3 text-body font-semibold leading-snug text-ink">{selectedStuckItem.rule}</p>
             </div>
-            <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold self-start sm:self-auto shrink-0 flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-600" />
-              IRDAI Protected
-            </span>
-          </div>
-
-          <div>
-            <div className="text-xs font-bold text-slate-700 mb-2">
-              {selectedStuckItem.actionTitle}
-            </div>
-            <div className="space-y-1.5 text-xs text-slate-600">
-              {selectedStuckItem.steps.map((st, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="w-4 h-4 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    {i + 1}
-                  </span>
-                  <span>{st}</span>
-                </div>
-              ))}
+            <div>
+              <div className="text-small font-semibold text-ink-2">{selectedStuckItem.actionTitle}</div>
+              <ol className="mt-3 space-y-3">
+                {selectedStuckItem.steps.map((st, i) => (
+                  <li key={i} className="flex gap-3 text-sm text-ink-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-peacock-600 text-tiny font-semibold text-white">{i + 1}</span>
+                    <span className="pt-0.5">{st}</span>
+                  </li>
+                ))}
+              </ol>
             </div>
           </div>
 
-          {/* Copy Box */}
-          <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700">
-                Ready-to-Send WhatsApp / SMS Notice:
-              </span>
+          <div className="flex flex-col gap-3 rounded-xl bg-ground p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-small font-semibold text-ink-2">Ready-to-send WhatsApp / SMS notice</span>
               <button
                 type="button"
                 onClick={() => handleCopyNotice(selectedStuckItem.noticeText, selectedStuckItem.id)}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-small font-semibold text-peacock-700 hover:text-peacock-900"
               >
-                {copiedKey === selectedStuckItem.id ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-emerald-600">Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy Text</span>
-                  </>
-                )}
+                {copiedKey === selectedStuckItem.id ? <Check className="h-4 w-4 text-leaf-600" /> : <Copy className="h-4 w-4" />}
+                {copiedKey === selectedStuckItem.id ? "Copied" : "Copy text"}
               </button>
             </div>
-            <p className="text-xs text-slate-600 font-mono bg-slate-50 p-3 rounded-lg border border-slate-100">
-              {selectedStuckItem.noticeText
-                .replace("{CLAIM_ID}", claimStatus?.claim_number || "CLM-2026-8821")
-                .replace("{POLICY_NO}", claimStatus?.policy_number || "POL-STAR-7731")}
-            </p>
-          </div>
-
-          {/* Quick Actions: Copy Notice & Call Insurer Priority Line */}
-          <div className="flex flex-wrap items-center gap-3 pt-1">
-            <Button
-              onClick={() => handleCopyNotice(selectedStuckItem.noticeText, selectedStuckItem.id)}
-              className="rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white cursor-pointer"
-            >
-              {copiedKey === selectedStuckItem.id ? <Check className="w-3.5 h-3.5 mr-1.5" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
-              {copiedKey === selectedStuckItem.id ? "Notice Copied" : selectedStuckItem.primaryBtn}
-            </Button>
-
-            <a
-              href="tel:1800-425-2255"
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-300 text-slate-800 text-xs font-bold hover:bg-slate-100 transition-colors"
-            >
-              <PhoneCall className="w-3.5 h-3.5 text-slate-600" />
-              <span>Call Insurer Priority Line (1800-425-2255)</span>
-            </a>
+            <p className="flex-1 rounded-lg bg-surface p-3.5 font-mono text-small leading-relaxed text-ink-2 shadow-card">{formattedNotice}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="proceed" onClick={() => handleCopyNotice(selectedStuckItem.noticeText, selectedStuckItem.id)}>
+                {copiedKey === selectedStuckItem.id ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copiedKey === selectedStuckItem.id ? "Notice copied" : selectedStuckItem.primaryBtn}
+              </Button>
+              <a
+                href="tel:1800-425-2255"
+                className="inline-flex h-10 items-center gap-2 rounded-field bg-surface px-4 text-sm font-semibold text-ink ring-1 ring-inset ring-line-strong transition-colors hover:bg-ground"
+              >
+                <PhoneCall className="h-4 w-4 text-ink-3" />
+                Call insurer priority line
+              </a>
+            </div>
           </div>
         </div>
 
-        {/* Unified Regulatory Escalation Bar (1 Consolidated Location for Bima Bharosa & Portals) */}
-        <div className="p-5 rounded-2xl bg-slate-900 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col gap-4 rounded-card bg-peacock-800 p-5 text-white shadow-raised sm:p-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-lime-400 uppercase tracking-wider">
-                Official Grievance Portals
-              </span>
-            </div>
-            <div className="text-sm font-bold text-white mt-1">
-              Insurer delayed or refused without legal cause?
-            </div>
-            <div className="text-xs text-slate-400 mt-0.5">
-              Launch our AI agent to prefill the grievance portal for <span className="text-lime-300 font-semibold">{selectedStuckItem.title}</span>, or access official dispute bodies.
-            </div>
+            <div className="text-small font-semibold text-marigold-300">Official grievance portals</div>
+            <div className="mt-1 text-body font-semibold">Insurer delayed or refused without a legal reason?</div>
+            <p className="mt-0.5 max-w-xl text-small text-peacock-100/80">
+              Let our assistant prefill the IRDAI Bima Bharosa complaint for{" "}
+              <span className="font-semibold text-white">{selectedStuckItem.title}</span>, or go straight to the dispute bodies.
+            </p>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <Button
-              onClick={() => handleOpenBimaAutofill(activeIssue)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-lime-400 hover:bg-lime-300 text-slate-950 font-black text-xs cursor-pointer shadow-xs transition-transform hover:scale-102"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>1-Click Bima Bharosa Autofill</span>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button variant="proceed" onClick={() => handleOpenBimaAutofill(activeIssue)}>
+              <Sparkles className="h-4 w-4" />
+              Prefill Bima Bharosa complaint
             </Button>
             <a
               href="https://bimabharosa.irdai.gov.in/RegComplaint/RegisterComplaint"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-700 transition-colors"
+              className="inline-flex h-10 items-center gap-1.5 rounded-field bg-white/10 px-3.5 text-sm font-semibold ring-1 ring-inset ring-white/15 transition-colors hover:bg-white/15"
             >
-              <span>IRDAI Portal ↗</span>
+              IRDAI portal
+              <ExternalLink className="h-3.5 w-3.5" />
             </a>
             <a
               href="https://www.cioins.co.in/"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-700 transition-colors"
+              className="inline-flex h-10 items-center gap-1.5 rounded-field bg-white/10 px-3.5 text-sm font-semibold ring-1 ring-inset ring-white/15 transition-colors hover:bg-white/15"
             >
-              <span>Ombudsman (CIO) ↗</span>
+              Insurance Ombudsman
+              <ExternalLink className="h-3.5 w-3.5" />
             </a>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* MODAL 1: Customer Information Sheet (CIS)                                 */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
+      {/* Customer Information Sheet */}
       <Dialog open={cisModalOpen} onOpenChange={setCisModalOpen}>
-        <DialogContent className="max-w-md p-6 bg-white rounded-3xl">
+        <DialogContent onClose={() => setCisModalOpen(false)}>
           <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-slate-900">
-              Customer Information Sheet (CIS)
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Plain-language coverage rules for Policy #{claimStatus?.policy_number || "POL-STAR-7731"}
-            </DialogDescription>
+            <DialogTitle>What your policy covers</DialogTitle>
+            <DialogDescription>Plain-language coverage rules for policy {claimStatus?.policy_number || "POL-STAR-7731"} (Customer Information Sheet)</DialogDescription>
           </DialogHeader>
-
-          <div className="space-y-3 py-2 text-xs">
-            <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex justify-between items-center">
-              <div>
-                <div className="font-bold text-slate-900">Room Rent Limit</div>
-                <div className="text-slate-500">Single Private Room (1% of Sum Insured)</div>
-              </div>
-              <Badge variant="outline" className="font-bold">₹10,000 / day</Badge>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex justify-between items-center">
-              <div>
-                <div className="font-bold text-slate-900">ICU Charges</div>
-                <div className="text-slate-500">Up to 2% of Sum Insured per day</div>
-              </div>
-              <Badge variant="outline" className="font-bold">₹20,000 / day</Badge>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex justify-between items-center">
-              <div>
-                <div className="font-bold text-slate-900">Co-Payment</div>
-                <div className="text-slate-500">Standard network hospital claim</div>
-              </div>
-              <Badge className="bg-emerald-600 text-white font-bold">0% Co-Pay</Badge>
-            </div>
-
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-100 text-amber-900">
-              <div className="font-bold">Excluded Items (IRDAI Schedule I)</div>
-              <div className="text-[11px] text-amber-800 mt-0.5">
-                Gloves, PPE kits, admission fees, and attendee food are non-payable out-of-pocket costs.
-              </div>
-            </div>
+          <ul className="divide-y divide-line overflow-hidden rounded-xl ring-1 ring-line">
+            {[
+              ["Room rent limit", "Single private room (1% of sum insured)", "₹10,000 / day"],
+              ["ICU charges", "Up to 2% of sum insured per day", "₹20,000 / day"],
+              ["Co-payment", "Standard network hospital claim", "0% co-pay"],
+            ].map(([title, sub, value]) => (
+              <li key={title} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-ink">{title}</div>
+                  <div className="text-small text-ink-3">{sub}</div>
+                </div>
+                <span className="figures shrink-0 rounded-lg bg-peacock-50 px-2.5 py-1 text-small font-semibold text-peacock-800">{value}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 rounded-xl bg-sand-50 p-4 text-small text-sand-800 ring-1 ring-inset ring-sand-200">
+            <div className="font-semibold">Not covered (IRDAI List I)</div>
+            Gloves, PPE kits, admission fees and attendant food are paid by you.
           </div>
-
-          <DialogFooter className="pt-2">
-            <Button
-              onClick={() => setCisModalOpen(false)}
-              className="w-full rounded-xl bg-slate-900 text-white font-bold text-xs"
-            >
-              Close Summary
+          <DialogFooter>
+            <Button onClick={() => setCisModalOpen(false)} className="w-full sm:w-auto">
+              Got it
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* MODAL 2: SMS & WhatsApp Alerts                                             */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
+      {/* SMS & WhatsApp alerts */}
       <Dialog open={alertModalOpen} onOpenChange={setAlertModalOpen}>
-        <DialogContent className="max-w-md p-6 bg-white rounded-3xl">
+        <DialogContent onClose={() => setAlertModalOpen(false)}>
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-slate-900">
-              Get Live Claim Updates
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              We'll send you an instant SMS & WhatsApp message the moment your claim is approved.
-            </DialogDescription>
+            <DialogTitle>Get live claim updates</DialogTitle>
+            <DialogDescription>We'll send an SMS and WhatsApp message the moment your claim moves.</DialogDescription>
           </DialogHeader>
-
-          <form onSubmit={handleEnableAlerts} className="space-y-3 py-2">
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Mobile Number
-              </label>
-              <Input
-                type="tel"
-                placeholder="+91 98765 43210"
-                value={phoneInput}
-                onChange={(e) => setPhoneInput(e.target.value)}
-                className="h-11 rounded-xl text-xs bg-slate-50 border-slate-200"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Email (Optional)
-              </label>
-              <Input
-                type="email"
-                placeholder="yourname@gmail.com"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                className="h-11 rounded-xl text-xs bg-slate-50 border-slate-200"
-              />
-            </div>
-
-            <DialogFooter className="pt-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setAlertModalOpen(false)}
-                className="rounded-xl text-xs font-semibold"
-              >
+          <form onSubmit={handleEnableAlerts} className="space-y-4">
+            <Field label="Mobile number" htmlFor="alert-phone">
+              <Input id="alert-phone" type="tel" placeholder="+91 98765 43210" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} className="h-11" />
+            </Field>
+            <Field label="Email" htmlFor="alert-email" optional>
+              <Input id="alert-email" type="email" placeholder="yourname@gmail.com" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} className="h-11" />
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={() => setAlertModalOpen(false)}>
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                disabled={submittingAlert}
-                className="rounded-xl bg-slate-900 text-white text-xs font-bold"
-              >
-                {submittingAlert ? "Enabling..." : "Enable Alerts"}
+              <Button type="submit" variant="proceed" loading={submittingAlert}>
+                {!submittingAlert && <Bell className="h-4 w-4" />}
+                {submittingAlert ? "Turning on…" : "Turn on updates"}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* ────────────────────────────────────────────────────────────────────────── */}
-      {/* MODAL 3: Bima Bharosa 1-Click Complaint Autofill                           */}
-      {/* ────────────────────────────────────────────────────────────────────────── */}
+      {/* Bima Bharosa complaint prefill */}
       <Dialog open={bimaModalOpen} onOpenChange={setBimaModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto p-6 bg-white rounded-3xl">
+        <DialogContent onClose={() => setBimaModalOpen(false)} className="sm:max-w-2xl">
           <DialogHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                <DialogTitle className="text-lg font-black text-slate-900">
-                  IRDAI Bima Bharosa Complaint Autofill
-                </DialogTitle>
-              </div>
-              <Badge className="bg-lime-400 text-slate-950 font-bold border-0 text-[10px]">
-                Ready for Portal
-              </Badge>
-            </div>
-            <DialogDescription className="text-xs text-slate-500">
-              Auto-filled from your live claim data, sanitized of banned characters, and citing IRDAI Master Circular 2024.
-            </DialogDescription>
+            <DialogTitle>IRDAI Bima Bharosa complaint, prefilled</DialogTitle>
+            <DialogDescription>Built from your claim, cleaned of characters the portal rejects, and citing the IRDAI Master Circular 2024.</DialogDescription>
           </DialogHeader>
 
           {loadingBima ? (
-            <div className="py-12 text-center text-xs text-slate-500 font-bold">
-              Extracting claim records & compiling IRDAI grievance payload...
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-ink-3">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Collecting your claim details…
             </div>
           ) : bimaPayload ? (
-            <div className="space-y-4 py-2 text-xs">
-              {/* Section 1: Complainant Details */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                    1. Complainant Details
-                  </span>
-                  <span className="text-[10px] text-slate-400">User Type: Individual</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Name *</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900 truncate">{bimaPayload.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.name, "name")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "name" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
+            <div className="space-y-4 text-sm">
+              <PacketSection title="1. Complainant" note="User type: individual">
+                <CopyField label="Name" value={bimaPayload.name} fieldKey="name" copiedField={copiedField} onCopy={handleCopyField} />
+                <CopyField label="Mobile number" value={bimaPayload.mobile} fieldKey="mobile" copiedField={copiedField} onCopy={handleCopyField} />
+                <CopyField label="Email" value={bimaPayload.email} fieldKey="email" copiedField={copiedField} onCopy={handleCopyField} />
+              </PacketSection>
 
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Mobile Number *</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900">{bimaPayload.mobile}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.mobile, "mobile")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "mobile" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
+              <PacketSection title="2. Address">
+                <CopyField label="PIN code" value={bimaPayload.pincode} fieldKey="pincode" copiedField={copiedField} onCopy={handleCopyField} />
+                <CopyField label="District" value={bimaPayload.district} />
+                <CopyField label="State" value={bimaPayload.state} />
+              </PacketSection>
 
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Email</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900 truncate">{bimaPayload.email}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.email, "email")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "email" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PacketSection title="3. Insurer & policy" cols={2}>
+                <CopyField label="Insurance company" value={bimaPayload.insurance_company_name} fieldKey="company" copiedField={copiedField} onCopy={handleCopyField} />
+                <CopyField label="Complaint type" value={`${bimaPayload.complaint_type} · ${bimaPayload.complaint_description_type}`} />
+                <CopyField label="Identifier type" value={bimaPayload.identifier_type} />
+                <CopyField label="Claim / policy number" value={bimaPayload.identifier_number} fieldKey="id_num" copiedField={copiedField} onCopy={handleCopyField} />
+              </PacketSection>
 
-              {/* Section 2: Address Details */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
-                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                  2. Address Details
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Pin Code *</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900">{bimaPayload.pincode}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.pincode, "pincode")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "pincode" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">District *</span>
-                    <span className="font-bold text-slate-900 block mt-0.5 truncate">{bimaPayload.district}</span>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">State *</span>
-                    <span className="font-bold text-slate-900 block mt-0.5 truncate">{bimaPayload.state}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3 & 4: Insurance & Policy Identification */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
-                <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                  3. Insurance Company & Policy Details
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Insurance Company *</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900 text-[11px] truncate">
-                        {bimaPayload.insurance_company_name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.insurance_company_name, "company")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "company" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Complaint Type & Sub-type *</span>
-                    <span className="font-bold text-slate-900 text-[11px] block mt-0.5 truncate">
-                      {bimaPayload.complaint_type} • {bimaPayload.complaint_description_type}
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Identifier Type *</span>
-                    <span className="font-bold text-slate-900 block mt-0.5">{bimaPayload.identifier_type}</span>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Claim / Policy Number *</span>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="font-bold text-slate-900">{bimaPayload.identifier_number}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyField(bimaPayload.identifier_number, "id_num")}
-                        className="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer"
-                      >
-                        {copiedField === "id_num" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 5: Complaint Details */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                    4. Complaint Description (Sanitized for Portal)
-                  </span>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                    {Math.min(bimaPayload.complaint_details?.length || 0, 400)} / 400 chars • IRDAI Compliant
+              <div className="rounded-xl bg-ground p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-small font-semibold text-ink-2">4. Complaint description</span>
+                  <span className="figures rounded-full bg-leaf-50 px-2 py-0.5 text-tiny font-semibold text-leaf-700">
+                    {Math.min(bimaPayload.complaint_details?.length || 0, 400)} / 400 characters
                   </span>
                 </div>
-                <div className="p-3 rounded-xl bg-white border border-slate-200 font-mono text-[11px] text-slate-700 leading-relaxed max-h-36 overflow-y-auto">
+                <p className="mt-2 max-h-36 overflow-y-auto rounded-lg bg-surface p-3 font-mono text-small leading-relaxed text-ink-2 shadow-card">
                   {(bimaPayload.complaint_details || "").slice(0, 400)}
-                </div>
-                <div className="flex items-center justify-between pt-1">
+                </p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap gap-1">
                     {bimaPayload.statutory_citations?.map((cit, i) => (
-                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-medium">
+                      <span key={i} className="rounded-md bg-peacock-50 px-2 py-0.5 text-tiny font-medium text-peacock-700">
                         {cit}
                       </span>
                     ))}
@@ -1342,207 +1023,145 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
                   <button
                     type="button"
                     onClick={() => handleCopyField(bimaPayload.complaint_details, "complaint_text")}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                    className="inline-flex cursor-pointer items-center gap-1 text-small font-semibold text-peacock-700 hover:text-peacock-900"
                   >
-                    {copiedField === "complaint_text" ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-600" />
-                        <span className="text-emerald-600">Copied Description</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy Description</span>
-                      </>
-                    )}
+                    {copiedField === "complaint_text" ? <Check className="h-3.5 w-3.5 text-leaf-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedField === "complaint_text" ? "Description copied" : "Copy description"}
                   </button>
                 </div>
               </div>
 
-              {/* How Prefill & Manual OTP/CAPTCHA Work */}
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 text-white border border-slate-700 shadow-sm space-y-3">
+              <div className="rounded-xl bg-peacock-800 p-4 text-white">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full bg-lime-400 text-slate-950 font-black text-[10px] tracking-wider uppercase">
-                      Prefill &amp; Manual Takeover
-                    </span>
-                    <span className="text-xs font-bold text-white">How OTP &amp; CAPTCHA Work in Demo</span>
-                  </div>
-                  <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-2 py-0.5 rounded-full">
-                    ✓ Zero Auto-Submit Risk
-                  </span>
+                  <span className="text-small font-semibold">How the prefill works</span>
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-tiny font-semibold text-peacock-100">Never submits for you</span>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-                  <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5 text-lime-400 font-bold text-xs">
-                        <span className="w-4 h-4 rounded-full bg-lime-400/20 text-lime-400 flex items-center justify-center text-[10px]">1</span>
-                        <span>1-Click Prefill</span>
+                <ol className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {[
+                    ["Prefill", "The assistant opens Chrome and fills your name, mobile, email, PIN, claim number and complaint. Filled fields turn green."],
+                    ["Send the OTP", "OTP is paused to save your daily quota. Click the mobile field and press Tab when you're ready."],
+                    ["CAPTCHA & submit", "Type the CAPTCHA at the bottom and press Register. You stay in control."],
+                  ].map(([t, d], i) => (
+                    <li key={t} className="rounded-lg bg-white/5 p-3 ring-1 ring-inset ring-white/10">
+                      <div className="flex items-center gap-2 text-small font-semibold">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-marigold-400 text-tiny text-ink">{i + 1}</span>
+                        {t}
                       </div>
-                      <p className="text-[11px] text-slate-300 mt-1.5 leading-snug">
-                        Agent opens Chrome and populates Name, Mobile, Email, PIN, Claim ID, and Legal Violation Text.
-                      </p>
-                    </div>
-                    <div className="mt-2 text-[10px] text-lime-400/80 font-medium">Fields turn green ✓</div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
-                        <span className="w-4 h-4 rounded-full bg-amber-400/20 text-amber-400 flex items-center justify-center text-[10px]">2</span>
-                        <span>Generate SMS OTP</span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 mt-1.5 leading-snug">
-                        OTP trigger is safely paused to save your daily quota. When ready, click Mobile &amp; press Tab to send OTP.
-                      </p>
-                    </div>
-                    <div className="mt-2 text-[10px] text-amber-400/80 font-medium">Daily quota protected 🛡️</div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5 text-blue-400 font-bold text-xs">
-                        <span className="w-4 h-4 rounded-full bg-blue-400/20 text-blue-400 flex items-center justify-center text-[10px]">3</span>
-                        <span>CAPTCHA &amp; Submit</span>
-                      </div>
-                      <p className="text-[11px] text-slate-300 mt-1.5 leading-snug">
-                        Solve the visual CAPTCHA at the bottom and click "Register". Agent never submits for you.
-                      </p>
-                    </div>
-                    <div className="mt-2 text-[10px] text-blue-400/80 font-medium">You hold 100% control 🔒</div>
-                  </div>
-                </div>
+                      <p className="mt-1.5 text-tiny leading-relaxed text-peacock-100/80">{d}</p>
+                    </li>
+                  ))}
+                </ol>
               </div>
 
-              {/* Agent Active / Result Status */}
-              {runningAgent ? (
-                <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 flex items-center gap-3 animate-pulse">
-                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
-                  <div className="text-xs">
-                    <strong className="block font-bold">Launching Visible Chrome Session...</strong>
-                    <span className="text-blue-800 text-[11px]">Navigating to Bima Bharosa and autofilling all 6 grievance sections with green highlighting.</span>
+              {runningAgent && (
+                <div className="flex items-center gap-3 rounded-xl bg-peacock-50 p-3.5 text-peacock-900" role="status">
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-peacock-600" />
+                  <div className="text-small">
+                    <strong className="block font-semibold">Opening a Chrome window…</strong>
+                    Going to Bima Bharosa and filling every section of the complaint.
                   </div>
                 </div>
-              ) : null}
+              )}
 
-              {agentResult ? (
-                <div className="p-4 rounded-2xl bg-emerald-50/90 border-2 border-emerald-400 text-emerald-950 space-y-2.5 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-600 animate-ping" />
-                      <span className="font-black text-xs text-emerald-900 uppercase tracking-wide">
-                        🚀 Chrome Browser Window Is Open On Your Desktop!
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900">
-                      Ready For Manual OTP &amp; CAPTCHA
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-emerald-900 leading-relaxed font-medium">
-                    {agentResult.message}
-                  </p>
-
-                  <div className="p-3 rounded-xl bg-white/90 border border-emerald-200 text-[11px] text-emerald-950 space-y-1.5 shadow-2xs">
-                    <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                      <Check className="w-4 h-4 text-emerald-600" />
-                      <span>Take over in the Chrome window:</span>
-                    </div>
-                    <div className="text-slate-700 pl-5 space-y-1">
-                      <div>1. Switch to the new Chrome window on your screen (or taskbar). All fields are prefilled in green.</div>
-                      <div>2. The Bima Bharosa OTP dialog is open—type the 6-digit SMS code you received and click <strong>"Validate OTP"</strong>.</div>
-                      <div>3. Scroll to the bottom, type the CAPTCHA letters, and click <strong>"Register"</strong> to submit!</div>
-                    </div>
-                  </div>
+              {agentResult && (
+                <div className="space-y-2 rounded-xl bg-leaf-50 p-4 text-leaf-900 ring-1 ring-inset ring-leaf-200">
+                  <div className="text-small font-semibold">Chrome is open on your computer</div>
+                  <p className="text-small">{agentResult.message}</p>
+                  <ol className="list-decimal space-y-1 pl-5 text-small text-ink-2">
+                    <li>Switch to the new Chrome window. Every field is filled in green.</li>
+                    <li>Enter the 6-digit SMS code and click “Validate OTP”.</li>
+                    <li>Type the CAPTCHA at the bottom and click “Register”.</li>
+                  </ol>
                 </div>
-              ) : null}
+              )}
 
-              {/* In-Tab Bookmarklet & Script Option */}
-              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-amber-600" />
-                    <span className="font-bold text-slate-900 text-xs">
-                      Option B: In-Tab Autofill Bookmarklet (Sandbox Bypass)
-                    </span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold">
-                    For Current Browser
-                  </span>
+              <div className="space-y-3 rounded-xl bg-sand-50 p-4 ring-1 ring-inset ring-sand-200">
+                <div className="flex items-center gap-2 text-small font-semibold text-ink">
+                  <Zap className="h-4 w-4 text-sand-600" />
+                  Or fill it in this browser with a bookmarklet
                 </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Prefer filing in your current browser tab? Drag this button to your Bookmarks bar, open Bima Bharosa, and click the bookmark once to autofill everything instantly:
+                <p className="text-small leading-relaxed text-ink-2">
+                  Drag the button to your bookmarks bar, open Bima Bharosa, and click the bookmark once to fill the form.
                 </p>
-
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
                   <a
                     href={`javascript:${generateBimaBharosaScript(bimaPayload)}`}
-                    onClick={(e) => {
+                    onClick={() => {
                       toast({
-                        title: "Bookmarklet Ready",
-                        description: "Drag this button to your Bookmarks Bar! When on Bima Bharosa, click it to autofill.",
+                        title: "Bookmarklet ready",
+                        description: "Drag this button to your bookmarks bar. On Bima Bharosa, click it to fill the form.",
                         variant: "default",
                       })
                     }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-xs cursor-grab active:cursor-grabbing transition-transform hover:scale-102"
+                    className="inline-flex h-9 cursor-grab items-center gap-1.5 rounded-lg bg-marigold-400 px-3.5 text-small font-semibold text-ink shadow-proceed active:cursor-grabbing"
                   >
-                    <Zap className="w-3.5 h-3.5 text-slate-950" />
-                    <span>⚡ Drag to Bookmarks: "Autofill Bima Bharosa"</span>
+                    <Zap className="h-3.5 w-3.5" />
+                    Autofill Bima Bharosa
                   </a>
-
                   <button
                     type="button"
-                    onClick={() => {
-                      const code = generateBimaBharosaScript(bimaPayload)
-                      handleCopyField(code, "bookmarklet_code")
-                    }}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-slate-700 hover:text-slate-900 bg-white px-3 py-2 rounded-xl border border-amber-300 cursor-pointer"
+                    onClick={() => handleCopyField(generateBimaBharosaScript(bimaPayload), "bookmarklet_code")}
+                    className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-surface px-3 text-small font-semibold text-ink-2 ring-1 ring-inset ring-sand-200 hover:bg-sand-50"
                   >
-                    {copiedField === "bookmarklet_code" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedField === "bookmarklet_code" ? "Script Copied!" : "Copy 1-Click Autofill Script"}</span>
+                    {copiedField === "bookmarklet_code" ? <Check className="h-3.5 w-3.5 text-leaf-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedField === "bookmarklet_code" ? "Script copied" : "Copy autofill script"}
                   </button>
                 </div>
               </div>
             </div>
           ) : null}
 
-          <DialogFooter className="flex-col sm:flex-row gap-2 pt-3 border-t border-slate-100">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyFullPacket}
-              className="rounded-xl text-xs font-bold gap-1.5 cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>{copiedField === "full_packet" ? "Full Packet Copied!" : "Copy Form Packet"}</span>
+          <DialogFooter>
+            <Button type="button" variant="secondary" size="sm" onClick={handleCopyFullPacket}>
+              <Copy className="h-3.5 w-3.5" />
+              {copiedField === "full_packet" ? "Packet copied" : "Copy form packet"}
             </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleOpenPortalInTab}
-              className="rounded-xl text-xs font-bold gap-1.5 cursor-pointer bg-slate-900 text-white hover:bg-slate-800 border-slate-700"
-            >
-              <span>↗️ Open Portal in Tab &amp; Copy Script</span>
-              <ExternalLink className="w-3.5 h-3.5 text-lime-400" />
+            <Button type="button" variant="secondary" size="sm" onClick={handleOpenPortalInTab}>
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open portal & copy script
             </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              disabled={runningAgent}
-              onClick={handleTriggerBrowserAgent}
-              className="rounded-xl text-xs font-bold gap-1.5 bg-lime-400 hover:bg-lime-300 text-slate-950 cursor-pointer shadow-xs transition-transform hover:scale-102"
-            >
-              {runningAgent ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-950" /> : <Sparkles className="w-3.5 h-3.5 text-slate-950" />}
-              <span>{runningAgent ? "Opening Chrome & Prefilling..." : "🚀 Launch & Prefill Portal (Opens Chrome)"}</span>
+            <Button type="button" variant="proceed" size="sm" onClick={handleTriggerBrowserAgent} loading={runningAgent}>
+              {!runningAgent && <Sparkles className="h-3.5 w-3.5" />}
+              {runningAgent ? "Opening Chrome…" : "Prefill in Chrome"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function PacketSection({ title, note, cols = 3, children }) {
+  return (
+    <div className="rounded-xl bg-ground p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-small font-semibold text-ink-2">{title}</span>
+        {note && <span className="text-tiny text-ink-3">{note}</span>}
+      </div>
+      <div className={cn("grid grid-cols-1 gap-2", cols === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3")}>{children}</div>
+    </div>
+  )
+}
+
+function CopyField({ label, value, fieldKey, copiedField, onCopy }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-surface px-3 py-2 shadow-card">
+      <span className="block text-tiny font-medium text-ink-3">{label}</span>
+      <div className="mt-0.5 flex items-center justify-between gap-2">
+        <span className="truncate text-small font-semibold text-ink" title={value}>
+          {value}
+        </span>
+        {onCopy && (
+          <button
+            type="button"
+            onClick={() => onCopy(value, fieldKey)}
+            className="shrink-0 cursor-pointer text-ink-4 transition-colors hover:text-ink"
+            aria-label={`Copy ${label}`}
+          >
+            {copiedField === fieldKey ? <Check className="h-3.5 w-3.5 text-leaf-600" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

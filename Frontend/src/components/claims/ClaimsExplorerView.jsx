@@ -1,78 +1,91 @@
-import { useAuth } from "../../context/AuthContext"
-import React, { useState, useEffect } from "react"
-import { Search, Filter, ArrowRight, Clock, Plus, RefreshCw, Layers, Trash2 } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { FileStack, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
+import { useAuth } from "../../context/AuthContext"
 import { api } from "../../services/api"
-import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
-import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
+import { cn } from "../../lib/utils"
 import { Button } from "../ui/button"
-import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+import { TabBar } from "../ui/tab-bar"
+import { EmptyState } from "../ui/empty-state"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
+import { PageHeader } from "../common/PageHeader"
+import { ClaimsTable, Panel } from "./ClaimsTable"
 
 const STATUS_FILTERS = [
-  { key: "all", label: "All Claims" },
-  { key: "submitted", label: "Submitted" },
-  { key: "in_review", label: "In Review" },
-  { key: "auto_approved", label: "Auto-Approved" },
-  { key: "finalized", label: "Finalized" },
+  { value: "all", label: "All claims" },
+  { value: "submitted", label: "Submitted" },
+  { value: "in_review", label: "In review" },
+  { value: "auto_approved", label: "Auto-approved" },
+  { value: "finalized", label: "Finalized" },
 ]
 
 export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
   const { user } = useAuth()
-  let navigate = () => {}
-  try {
-    navigate = useNavigate()
-  } catch {}
-
-  const handleSelect = (claimId) => {
-    if (onSelectClaim) onSelectClaim(claimId)
-    if (navigate) navigate(`/claims/${claimId}`)
-  }
-  const [claims, setClaims] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState("all")
-  const [searchQuery, setSearchQuery] = useState("")
+  const navigate = useNavigate()
   const { toast } = useToast()
   const isHospital = user?.role === "hospital_desk"
+
+  const [claims, setClaims] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [searchQuery, setSearchQuery] = useState("")
   // Draft pending deletion (hospital only); drives the confirmation dialog
   const [claimToDelete, setClaimToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
-  const handleDeleteDraft = async () => {
-    if (!claimToDelete) return
-    setDeleting(true)
-    try {
-      await api.claims.delete(claimToDelete.id)
-      toast({ title: "Draft Deleted", description: `${claimToDelete.claim_number} and its documents were deleted.`, variant: "success" })
-      setClaimToDelete(null)
-      loadClaims()
-    } catch (err) {
-      toast({ title: "Delete Failed", description: err.message, variant: "destructive" })
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  const loadClaims = async () => {
-    setLoading(true)
+  const loadClaims = useCallback(async (status) => {
     try {
       const filters = {}
-      if (statusFilter !== "all") filters.status = statusFilter
+      if (status !== "all") filters.status = status
       const res = await api.claims.list(filters)
       setClaims(res?.items || [])
     } catch (err) {
       console.warn("Failed to load claims:", err)
     } finally {
       setLoading(false)
+      setRefreshing(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadClaims(statusFilter)
+  }, [statusFilter, loadClaims])
+
+  const changeFilter = (value) => {
+    if (value === statusFilter) return
+    setLoading(true)
+    setStatusFilter(value)
+  }
+
+  const refresh = () => {
+    setRefreshing(true)
+    loadClaims(statusFilter)
+  }
+
+  const handleSelect = (claim) => {
+    onSelectClaim?.(claim.id)
+    navigate(`/claims/${claim.id}`)
+  }
+
+  const handleDeleteDraft = async () => {
+    if (!claimToDelete) return
+    setDeleting(true)
+    try {
+      await api.claims.delete(claimToDelete.id)
+      toast({ title: "Draft deleted", description: `${claimToDelete.claim_number} and its documents were deleted.`, variant: "success" })
+      setClaimToDelete(null)
+      loadClaims(statusFilter)
+    } catch (err) {
+      toast({ title: "Couldn't delete the draft", description: err.message, variant: "destructive" })
+    } finally {
+      setDeleting(false)
     }
   }
 
-  useEffect(() => {
-    loadClaims()
-  }, [statusFilter])
+  const filters = isHospital ? [STATUS_FILTERS[0], { value: "draft", label: "Drafts" }, ...STATUS_FILTERS.slice(1)] : STATUS_FILTERS
 
   const filtered = claims.filter((c) => {
     if (!searchQuery) return true
@@ -86,204 +99,117 @@ export function ClaimsExplorerView({ onSelectClaim, onNewClaim }) {
   })
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto px-4 sm:px-6 py-4">
-      {/* Header & New Claim CTA */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Claims Explorer</h1>
-          <p className="text-xs text-slate-500">
-            Search, filter, and audit health insurance claims across all network hospitals.
-          </p>
+    <div className="mx-auto max-w-[1360px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        title="Claims"
+        description={
+          isHospital
+            ? "Every cashless claim your desk has started, from draft to decision."
+            : "Search, filter and audit claims across network hospitals."
+        }
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
+              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+            {isHospital && (
+              <Button variant="proceed" size="sm" onClick={onNewClaim}>
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+                New claim
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <Panel>
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+          <TabBar variant="segmented" size="sm" tabs={filters} value={statusFilter} onChange={changeFilter} ariaLabel="Filter by status" />
+          <div className="relative w-full lg:w-80">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+            <Input
+              type="search"
+              placeholder="Search patient, hospital, insurer, claim no."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 pl-9"
+              aria-label="Search claims"
+            />
+          </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadClaims}
-            className="rounded-full text-xs h-8.5 px-3.5 gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-            <span>Refresh</span>
-          </Button>
-
-          {user?.role === "hospital_desk" && (
-          <Button
-            size="sm"
-            onClick={onNewClaim}
-            className="rounded-full text-xs h-8.5 px-4 font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1.5 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
-            <span>New Claim</span>
-          </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Filter Bar with Segmented Pills & Search */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3 rounded-2xl sm:rounded-full border border-slate-200/80 shadow-2xs">
-        
-        {/* Status Pills */}
-        <div className="flex items-center space-x-1 overflow-x-auto pb-1 md:pb-0">
-          {(user?.role === "hospital_desk"
-            ? [STATUS_FILTERS[0], { key: "draft", label: "Drafts" }, ...STATUS_FILTERS.slice(1)]
-            : STATUS_FILTERS
-          ).map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setStatusFilter(f.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                statusFilter === f.key
-                  ? "bg-slate-950 text-white font-bold shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Pill Search Input */}
-        <div className="relative w-full md:w-72">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-          <Input
-            placeholder="Search patient, hospital, claim #..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="rounded-full pl-8 h-8 text-xs border-slate-200 bg-slate-50 focus:bg-white"
-          />
-        </div>
-      </div>
-
-      {/* Claims Table */}
-      <Card className="rounded-3xl border-slate-200/80 shadow-xs overflow-hidden">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="py-16 text-center text-slate-500 text-xs">Loading claims...</div>
-          ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-slate-500 text-xs">
-              No claims found matching criteria.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/70 border-b border-slate-200/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    <th className="py-3 px-4">Claim ID & Patient</th>
-                    <th className="py-3 px-4">Hospital & Insurer</th>
-                    <th className="py-3 px-4">Billed Amount</th>
-                    <th className="py-3 px-4">Approved Amount</th>
-                    <th className="py-3 px-4">SLA Deadline</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.map((c) => (
-                    <tr
-                      key={c.id}
-                      className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                      onClick={() => handleSelect(c.id)}
+        <ClaimsTable
+          claims={filtered}
+          loading={loading}
+          onOpen={handleSelect}
+          variant="explorer"
+          renderActions={
+            isHospital
+              ? (c) =>
+                  c.status === "draft" ? (
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => setClaimToDelete(c)}
+                      className="text-ink-4 hover:bg-vermilion-50 hover:text-vermilion-700"
+                      title="Delete draft"
+                      aria-label={`Delete draft ${c.claim_number}`}
                     >
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors">
-                          {c.claim_number}
-                        </div>
-                        <div className="text-slate-600 font-medium">{c.patient_name}</div>
-                      </td>
-
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-800">{c.hospital_name}</div>
-                        <div className="text-[11px] text-slate-500">{c.insurer_name}</div>
-                      </td>
-
-                      <td className="py-3 px-4 font-mono font-medium text-slate-900">
-                        {formatCurrencyINR(c.billed_amount)}
-                      </td>
-
-                      <td className="py-3 px-4 font-mono font-bold text-emerald-700">
-                        {c.approved_amount !== null && c.approved_amount !== undefined
-                          ? formatCurrencyINR(c.approved_amount)
-                          : "—"}
-                      </td>
-
-                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        {c.status === "draft" ? (
-                          <span className="text-[11px] text-slate-500">Starts on submission</span>
-                        ) : (
-                          <SLAUrgencyBadge
-                            slaDeadline={c.sla_deadline}
-                            isBreached={c.sla_breached}
-                          />
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4">
-                        <Badge
-                          variant={
-                            c.status === "auto_approved" || c.status === "approved"
-                              ? "lime"
-                              : c.status === "queried" || c.status === "draft"
-                              ? "warning"
-                              : "secondary"
-                          }
-                          className="capitalize text-[10px] font-bold"
-                        >
-                          {c.status?.replaceAll("_", " ")}
-                        </Badge>
-                      </td>
-
-                      <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end space-x-1.5">
-                          <Button
-                            size="sm"
-                            onClick={() => handleSelect(c.id)}
-                            className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
-                          >
-                            <span>Open</span>
-                            <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
-                          </Button>
-                          {isHospital && c.status === "draft" && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setClaimToDelete(c)}
-                              className="rounded-full h-7.5 w-7.5 p-0 text-slate-400 hover:text-red-700 hover:bg-red-50"
-                              title="Delete draft"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null
+              : undefined
+          }
+          empty={
+            <EmptyState
+              icon={searchQuery ? Search : FileStack}
+              title={searchQuery ? "No claims match your search" : "No claims here yet"}
+              description={
+                searchQuery
+                  ? "Check the spelling, or search by claim number instead."
+                  : statusFilter === "all"
+                    ? isHospital
+                      ? "Start a cashless claim when a patient is ready for discharge."
+                      : "Claims appear here once hospitals submit them."
+                    : "No claims have this status right now."
+              }
+              action={
+                searchQuery ? (
+                  <Button variant="secondary" size="sm" onClick={() => setSearchQuery("")}>
+                    Clear search
+                  </Button>
+                ) : isHospital && statusFilter === "all" ? (
+                  <Button variant="proceed" onClick={onNewClaim}>
+                    <Plus className="h-4 w-4" />
+                    New claim
+                  </Button>
+                ) : null
+              }
+            />
+          }
+        />
+      </Panel>
 
       {/* Delete draft confirmation */}
       <Dialog open={Boolean(claimToDelete)} onOpenChange={(open) => !open && setClaimToDelete(null)}>
         <DialogContent onClose={() => setClaimToDelete(null)}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="w-4 h-4 text-red-600" />
-              <span>Delete draft {claimToDelete?.claim_number}?</span>
-            </DialogTitle>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-vermilion-50 text-vermilion-600">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <DialogTitle>Delete draft {claimToDelete?.claim_number}?</DialogTitle>
             <DialogDescription>
               The draft for {claimToDelete?.patient_name} and every document attached to it are permanently deleted. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setClaimToDelete(null)}>
-              Cancel
+            <Button variant="secondary" onClick={() => setClaimToDelete(null)}>
+              Keep draft
             </Button>
-            <Button onClick={handleDeleteDraft} disabled={deleting} className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{deleting ? "Deleting..." : "Delete Draft"}</span>
+            <Button variant="danger" onClick={handleDeleteDraft} loading={deleting}>
+              {!deleting && <Trash2 className="h-4 w-4" />}
+              {deleting ? "Deleting…" : "Delete draft"}
             </Button>
           </DialogFooter>
         </DialogContent>

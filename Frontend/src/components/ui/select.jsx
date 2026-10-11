@@ -1,13 +1,12 @@
 import * as React from "react"
 import { cn } from "../../lib/utils"
+import { fieldBase } from "./styles"
 
+// Native select keeps keyboard and screen-reader behaviour; only the chrome is ours.
 const Select = React.forwardRef(({ className, children, ...props }, ref) => {
   return (
     <select
-      className={cn(
-        "flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50",
-        className
-      )}
+      className={cn(fieldBase, "select-chevron flex h-10 cursor-pointer appearance-none pl-3 pr-9", className)}
       ref={ref}
       {...props}
     >

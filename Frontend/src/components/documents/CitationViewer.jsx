@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react"
-import { ChevronLeft, ChevronRight, FileText, ImageIcon, Quote, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, FileText, ImageIcon, Loader2, Quote, X } from "lucide-react"
 import { api } from "../../services/api"
-import { Badge } from "../ui/badge"
-import { Button } from "../ui/button"
+import { cn } from "../../lib/utils"
 
 const MATCH_NOTES = {
   exact: null,
@@ -72,78 +71,97 @@ export function CitationViewer({ claimId, citation, title, onClose }) {
   const note = MATCH_NOTES[citation.match] ?? null
 
   return (
-    <div className="flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="flex items-start justify-between gap-2 p-3 border-b border-slate-100 bg-slate-50/80">
+    <div className="flex animate-rise flex-col overflow-hidden rounded-card bg-surface shadow-raised">
+      <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
         <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{title || "Source citation"}</div>
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 mt-0.5 min-w-0">
-            {isImage ? <ImageIcon className="w-3.5 h-3.5 shrink-0 text-blue-600" /> : <FileText className="w-3.5 h-3.5 shrink-0 text-blue-600" />}
-            <span className="truncate" title={citation.filename}>{citation.filename || "Document"}</span>
+          <div className="text-tiny font-semibold text-ink-3">{title || "Source citation"}</div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold text-ink">
+            {isImage ? <ImageIcon className="h-4 w-4 shrink-0 text-peacock-600" /> : <FileText className="h-4 w-4 shrink-0 text-peacock-600" />}
+            <span className="truncate" title={citation.filename}>
+              {citation.filename || "Document"}
+            </span>
             {!isImage && citation.page && (
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">p. {citation.page}</Badge>
+              <span className="shrink-0 rounded-md bg-sunken px-1.5 text-tiny font-semibold text-ink-2">p. {citation.page}</span>
             )}
           </div>
         </div>
         {onClose && (
-          <Button size="sm" variant="ghost" onClick={onClose} className="h-7 w-7 p-0 shrink-0" title="Close citation">
-            <X className="w-4 h-4" />
-          </Button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-ink-3 transition-colors hover:bg-sunken hover:text-ink"
+            title="Close citation"
+            aria-label="Close citation"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
       </div>
 
       {citation.text && (
-        <div className="flex gap-2 p-3 text-[11px] text-slate-700 bg-amber-50/60 border-b border-amber-100">
-          <Quote className="w-3.5 h-3.5 shrink-0 text-amber-600 mt-0.5" />
-          <span className="font-mono leading-relaxed break-words">{citation.text}</span>
+        <div className="flex gap-2 border-b border-marigold-100 bg-marigold-50 px-4 py-2.5 text-small text-ink-2">
+          <Quote className="mt-0.5 h-3.5 w-3.5 shrink-0 text-marigold-600" />
+          <span className="break-words font-mono text-tiny leading-relaxed">{citation.text}</span>
         </div>
       )}
 
-      {note && <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100">{note}</div>}
+      {note && <div className="border-b border-line px-4 py-2 text-tiny text-ink-3">{note}</div>}
 
       {!isImage && (
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 text-[11px] text-slate-600">
+        <div className="flex items-center justify-between border-b border-line px-3 py-1.5 text-tiny text-ink-2">
           <div className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </Button>
-            <span>
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md hover:bg-sunken disabled:cursor-default disabled:opacity-35"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="figures font-semibold">
               Page {page}
               {pageCount ? ` of ${pageCount}` : ""}
             </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 w-6 p-0"
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md hover:bg-sunken disabled:cursor-default disabled:opacity-35"
               disabled={pageCount != null && page >= pageCount}
               onClick={() => setPage((p) => p + 1)}
+              aria-label="Next page"
             >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Button>
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
           {citation.page && page !== citation.page && (
-            <button className="text-blue-600 hover:underline cursor-pointer" onClick={() => setPage(citation.page)}>
+            <button className="cursor-pointer font-semibold text-peacock-600 hover:underline" onClick={() => setPage(citation.page)}>
               Back to cited page
             </button>
           )}
         </div>
       )}
 
-      <div className="relative overflow-auto max-h-[70vh] bg-slate-100">
-        {loading && <div className="p-8 text-center text-xs text-slate-500">Loading page…</div>}
-        {error && !loading && <div className="p-8 text-center text-xs text-red-600">{error}</div>}
+      <div className="relative max-h-[70vh] overflow-auto bg-sunken">
+        {loading && (
+          <div className="flex items-center justify-center gap-2 p-10 text-small text-ink-3">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading page…
+          </div>
+        )}
+        {error && !loading && <div className="p-8 text-center text-small text-vermilion-700">{error}</div>}
         {imageUrl && !error && (
-          <div className={`relative ${loading ? "hidden" : ""}`}>
+          <div className={cn("relative", loading && "hidden")}>
             <img
               src={imageUrl}
               alt={`${citation.filename || "Document"} page ${page}`}
-              className="w-full h-auto block select-none"
+              className="block h-auto w-full select-none"
               onLoad={scrollToHighlight}
             />
             {rects.map(([x0, y0, x1, y1], i) => (
               <div
                 key={i}
                 ref={i === 0 ? highlightRef : undefined}
-                className="absolute rounded-sm bg-yellow-300/40 ring-2 ring-amber-500/80 pointer-events-none"
+                className="pointer-events-none absolute rounded-sm bg-marigold-300/35 ring-2 ring-marigold-500/90"
                 style={{
                   left: `${x0 * 100}%`,
                   top: `${y0 * 100}%`,
@@ -170,14 +188,16 @@ export function CitationButton({ citation, onClick, active = false, label = "Sou
         onClick(citation)
       }}
       title={`${citation.filename}${citation.page ? `, page ${citation.page}` : ""}`}
-      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer transition-colors ${
-        active
-          ? "bg-amber-100 border-amber-300 text-amber-900"
-          : "bg-white border-slate-200 text-slate-600 hover:bg-amber-50 hover:border-amber-200"
-      }`}
+      className={cn(
+        "inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-tiny font-semibold transition-colors",
+        active ? "bg-marigold-400 text-ink" : "bg-surface text-ink-2 ring-1 ring-inset ring-line-strong hover:bg-marigold-50 hover:ring-marigold-300"
+      )}
     >
-      <Quote className="w-2.5 h-2.5" />
-      <span>{label}{citation.kind !== "image" && citation.page ? ` p.${citation.page}` : ""}</span>
+      <Quote className="h-3 w-3" />
+      <span>
+        {label}
+        {citation.kind !== "image" && citation.page ? ` p.${citation.page}` : ""}
+      </span>
     </button>
   )
 }

@@ -1,28 +1,15 @@
-import React, { useState, useEffect } from "react"
-import {
-  Building2,
-  FileCheck2,
-  AlertTriangle,
-  CheckCircle2,
-  Upload,
-  ArrowRight,
-  Sparkles,
-  ShieldAlert,
-  Percent,
-  FileText,
-  FileCode,
-  Zap,
-  TrendingDown,
-  Info,
-} from "lucide-react"
+import { useEffect, useState } from "react"
+import { ArrowRight, FileText, Info, ShieldAlert, Sparkles, UploadCloud, Zap, FileCheck2 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
 import { formatCurrencyINR } from "../../lib/utils"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
 import { Button } from "../ui/button"
-import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+import { Field } from "../ui/field"
+import { Badge } from "../ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
+import { PageHeader } from "../common/PageHeader"
 
 const QUICK_SCENARIOS = [
   {
@@ -56,11 +43,10 @@ const QUICK_SCENARIOS = [
 
 export function HospitalPreCheckView({ onClaimCreated }) {
   const { toast } = useToast()
-  let navigate = () => {}
-  try {
-    navigate = useNavigate()
-  } catch {}
+  const navigate = useNavigate()
   const [running, setRunning] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [preCheckResult, setPreCheckResult] = useState(null)
   const [templates, setTemplates] = useState([])
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -73,9 +59,10 @@ export function HospitalPreCheckView({ onClaimCreated }) {
   })
 
   useEffect(() => {
-    api.hospital.getSubmissionTemplates().then((res) => {
-      setTemplates(res?.templates || [])
-    })
+    api.hospital
+      .getSubmissionTemplates()
+      .then((res) => setTemplates(res?.templates || []))
+      .catch(() => {})
   }, [])
 
   const applyScenario = (sc) => {
@@ -88,8 +75,8 @@ export function HospitalPreCheckView({ onClaimCreated }) {
     })
     setPreCheckResult(null)
     toast({
-      title: `Scenario Loaded: ${sc.name}`,
-      description: `Billed: ₹${Number(sc.amount).toLocaleString("en-IN")}`,
+      title: `Scenario loaded: ${sc.name}`,
+      description: `Billed ${formatCurrencyINR(Number(sc.amount))}`,
       variant: "default",
     })
   }
@@ -111,26 +98,19 @@ export function HospitalPreCheckView({ onClaimCreated }) {
       const result = await api.hospital.runPreCheck(formData)
       setPreCheckResult(result)
       toast({
-        title: "Pre-Audit Simulation Complete",
-        description: "Checked against IRDAI Non-Payable list & GIPSA package ceilings.",
+        title: "Pre-check complete",
+        description: "Checked against the IRDAI non-payable list and GIPSA package ceilings.",
         variant: "info",
       })
     } catch (err) {
-      toast({
-        title: "Pre-Check Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Pre-check failed", description: err.message, variant: "destructive" })
     } finally {
       setRunning(false)
     }
   }
 
   const handleConvertToFormalClaim = async () => {
-    if (!window.confirm(
-      `Create a claim for ${form.patient_name || "this patient"}?\n\n` +
-      "SLA will begin after attaching the documents and submitting to the insurer."
-    )) return
+    setCreating(true)
     try {
       const insurers = await api.claims.listInsurers()
       const insurer = insurers.find((i) => i.name.toLowerCase() === (form.insurer_name || "").toLowerCase())
@@ -140,6 +120,7 @@ export function HospitalPreCheckView({ onClaimCreated }) {
           description: `"${form.insurer_name}" is not an insurer on the platform. Ask an admin to add it.`,
           variant: "destructive",
         })
+        setConfirmOpen(false)
         return
       }
       const newClaim = await api.claims.create({
@@ -155,343 +136,231 @@ export function HospitalPreCheckView({ onClaimCreated }) {
         const fd = new FormData()
         fd.append("file", uploadedFile)
         fd.append("doc_type", "itemized_bill")
-        billAttached = await api.documents.upload(newClaim.id, fd).then(() => true, () => false)
+        billAttached = await api.documents.upload(newClaim.id, fd).then(
+          () => true,
+          () => false
+        )
       }
       toast({
-        title: "Draft Claim Created",
-        description: `Claim ${newClaim.claim_number} saved as a draft${billAttached ? " with the audited bill attached" : ""}. Attach the policy and the medical bill, then submit it to the insurer to start the 3-hour SLA.`,
+        title: "Draft claim created",
+        description: `${newClaim.claim_number} is saved as a draft${billAttached ? " with the checked bill attached" : ""}. Attach the policy and the medical bill, then submit it to start the 3-hour SLA.`,
         variant: "success",
       })
-      if (onClaimCreated) onClaimCreated(newClaim)
-      if (newClaim?.id && navigate) {
-        navigate(`/claims/${newClaim.id}/documents`)
-      }
+      setConfirmOpen(false)
+      onClaimCreated?.(newClaim)
+      if (newClaim?.id) navigate(`/claims/${newClaim.id}/documents`)
     } catch (err) {
-      toast({
-        title: "Submission Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't create the claim", description: err.message, variant: "destructive" })
+    } finally {
+      setCreating(false)
     }
   }
 
-  // Calculate percentages for visual progress bar
-  const billedVal = parseFloat(form.billed_amount) || 1
-  const approvedVal = preCheckResult?.estimated_approved_amount ?? 148200
-  const deductionVal = preCheckResult?.estimated_deductions ?? 25300
-  const approvedPct = Math.min(100, Math.max(0, Math.round((approvedVal / (approvedVal + deductionVal)) * 100)))
+  const approvedVal = preCheckResult?.estimated_approved_amount ?? 0
+  const deductionVal = preCheckResult?.estimated_deductions ?? 0
+  const approvedPct = approvedVal + deductionVal > 0 ? Math.round((approvedVal / (approvedVal + deductionVal)) * 100) : 0
   const deductionPct = 100 - approvedPct
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value })
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-4">
-      
-      {/* Top Header & Scenario Quick-Pills */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span className="p-1.5 rounded-full bg-slate-900 text-[#A3FF12]">
-              <Building2 className="w-4 h-4" />
-            </span>
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Hospital Pre-Audit Desk</h1>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Audit itemized charges against IRDAI Non-Payable items & tariff caps before official TPA filing.
-          </p>
-        </div>
-
-        {/* 1-Click Test Scenarios */}
-        <div className="flex items-center space-x-2 overflow-x-auto pb-1">
-          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden lg:inline">Quick Test:</span>
+    <div className="mx-auto max-w-[1360px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        title="Pre-submission check"
+        description="See likely deductions against IRDAI non-payables and tariff caps before you file the claim."
+      >
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="text-small text-ink-3">Try a scenario:</span>
           {QUICK_SCENARIOS.map((sc) => (
             <button
               key={sc.name}
               type="button"
               onClick={() => applyScenario(sc)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700 shadow-2xs whitespace-nowrap cursor-pointer transition-all hover:border-slate-300"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-surface px-3 py-1 text-small font-semibold text-ink-2 shadow-card transition-shadow hover:shadow-raised"
             >
-              <span>{sc.name}</span>
-              <span className="text-[10px] text-slate-400 font-mono">₹{(Number(sc.amount) / 1000).toFixed(0)}k</span>
+              {sc.name}
+              <span className="figures font-normal text-ink-3">₹{(Number(sc.amount) / 1000).toFixed(0)}k</span>
             </button>
           ))}
         </div>
-      </div>
+      </PageHeader>
 
-      {/* Main 2-Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* Left Column: Form & Bill Dropzone (6 cols) */}
-        <div className="lg:col-span-6 space-y-4">
-          <Card className="rounded-3xl border-slate-200/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-slate-100/80">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-bold flex items-center space-x-2">
-                  <FileCheck2 className="w-4 h-4 text-slate-900" />
-                  <span>Draft Claim Details</span>
-                </CardTitle>
-                <Badge variant="secondary" className="text-[10px] font-semibold">
-                  Step 1 of 2
-                </Badge>
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+        <div className="space-y-6">
+          <section className="rounded-card bg-surface p-5 shadow-card sm:p-6" aria-label="Claim details">
+            <h2 className="text-body font-semibold text-ink">Claim details</h2>
+            <form onSubmit={handleRunPreCheck} className="mt-4 space-y-4">
+              <Field label="Patient full name" htmlFor="pc-patient" required>
+                <Input id="pc-patient" value={form.patient_name} onChange={set("patient_name")} required />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Hospital" htmlFor="pc-hospital" required>
+                  <Input id="pc-hospital" value={form.hospital_name} onChange={set("hospital_name")} required />
+                </Field>
+                <Field label="Insurer" htmlFor="pc-insurer">
+                  <Input id="pc-insurer" value={form.insurer_name} onChange={set("insurer_name")} />
+                </Field>
               </div>
-            </CardHeader>
-
-            <CardContent className="p-5">
-              <form onSubmit={handleRunPreCheck} className="space-y-4 text-xs">
-                
-                {/* Patient Name */}
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Patient Full Name</label>
-                  <Input
-                    value={form.patient_name}
-                    onChange={(e) => setForm({ ...form, patient_name: e.target.value })}
-                    required
-                    className="rounded-xl h-10 border-slate-200 text-xs font-medium"
-                  />
-                </div>
-
-                {/* Hospital & Insurer */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Hospital Provider</label>
-                    <Input
-                      value={form.hospital_name}
-                      onChange={(e) => setForm({ ...form, hospital_name: e.target.value })}
-                      required
-                      className="rounded-xl h-10 border-slate-200 text-xs"
-                    />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Policy number" htmlFor="pc-policy">
+                  <Input id="pc-policy" value={form.policy_number} onChange={set("policy_number")} className="font-mono text-small" />
+                </Field>
+                <Field label="Billed amount" htmlFor="pc-amount" required>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-ink-3">₹</span>
+                    <Input id="pc-amount" type="number" value={form.billed_amount} onChange={set("billed_amount")} required className="figures pl-7 font-semibold" />
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Payer / Insurer</label>
-                    <Input
-                      value={form.insurer_name}
-                      onChange={(e) => setForm({ ...form, insurer_name: e.target.value })}
-                      className="rounded-xl h-10 border-slate-200 text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Policy & Billed Amount */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Health Policy Number</label>
-                    <Input
-                      value={form.policy_number}
-                      onChange={(e) => setForm({ ...form, policy_number: e.target.value })}
-                      className="rounded-xl h-10 border-slate-200 text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Billed Amount (₹)</label>
-                    <Input
-                      type="number"
-                      value={form.billed_amount}
-                      onChange={(e) => setForm({ ...form, billed_amount: e.target.value })}
-                      required
-                      className="rounded-xl h-10 border-slate-200 text-xs font-semibold text-slate-900"
-                    />
-                  </div>
-                </div>
-
-                {/* File Dropzone */}
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Draft Hospital Bill / Breakdown</label>
-                  <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 hover:border-slate-400 bg-slate-50/60 hover:bg-slate-50 rounded-2xl cursor-pointer transition-colors group">
-                    <Upload className="w-5 h-5 text-slate-400 group-hover:text-slate-700 mb-1 transition-colors" />
-                    <span className="text-xs font-semibold text-slate-700">
-                      {uploadedFile ? uploadedFile.name : "Drop bill PDF / image here or Browse"}
-                    </span>
-                    <span className="text-[10px] text-slate-400 mt-0.5">Supports PDF, JPG, PNG up to 10MB</span>
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={(e) => setUploadedFile(e.target.files?.[0] || null)}
-                    />
-                  </label>
-                </div>
-
-                {/* Submit Action */}
-                <div className="pt-2">
-                  <Button
-                    type="submit"
-                    disabled={running}
-                    className="w-full h-11 rounded-full text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-2 shadow-xs cursor-pointer"
-                  >
-                    <Sparkles className="w-4 h-4 text-[#A3FF12]" />
-                    <span>{running ? "Simulating Audit with Gemini 1.5 Pro..." : "Run Pre-Submission Audit"}</span>
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-
-          {/* Clean Interactive Templates Guide */}
-          <Card className="rounded-3xl border-slate-200/80 shadow-xs">
-            <CardHeader className="pb-2.5">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Standardized Billing Templates
-                </CardTitle>
-                <span className="text-[10px] text-slate-400 font-medium">IRDAI Master List</span>
+                </Field>
               </div>
-            </CardHeader>
-            <CardContent className="p-5 pt-0 space-y-2.5">
-              {templates.map((tpl, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100/70 border border-slate-200/70 rounded-2xl text-xs transition-colors"
-                >
-                  <div className="flex items-center space-x-2.5">
-                    <div className="p-2 rounded-xl bg-white border border-slate-200/80 text-slate-700">
-                      <FileText className="w-4 h-4 text-blue-600" />
+              <div>
+                <span className="mb-1.5 block text-small font-semibold text-ink-2">Draft bill</span>
+                <label className="group flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-line-strong bg-ground/60 px-4 py-6 text-center transition-colors hover:border-peacock-300 hover:bg-peacock-50/50">
+                  <UploadCloud className="h-5 w-5 text-peacock-600" />
+                  <span className="text-sm font-semibold text-ink-2">{uploadedFile ? uploadedFile.name : "Drop the bill PDF or photo, or browse"}</span>
+                  <span className="text-tiny text-ink-3">PDF, JPG or PNG up to 10 MB</span>
+                  <input type="file" className="sr-only" onChange={(e) => setUploadedFile(e.target.files?.[0] || null)} />
+                </label>
+              </div>
+              <Button type="submit" size="lg" className="w-full" loading={running}>
+                {!running && <Sparkles className="h-4 w-4" />}
+                {running ? "Checking the bill…" : "Run pre-submission check"}
+              </Button>
+            </form>
+          </section>
+
+          {templates.length > 0 && (
+            <section className="rounded-card bg-surface p-5 shadow-card sm:p-6" aria-label="Billing templates">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-body font-semibold text-ink">Standard billing templates</h2>
+                <span className="text-tiny text-ink-3">IRDAI master list</span>
+              </div>
+              <ul className="mt-3 divide-y divide-line">
+                {templates.map((tpl, i) => (
+                  <li key={i} className="flex items-center justify-between gap-3 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-peacock-50 text-peacock-600">
+                        <FileText className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-ink">{tpl.name}</div>
+                        <div className="truncate text-small text-ink-3">{tpl.description}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="font-bold text-slate-900">{tpl.name}</div>
-                      <div className="text-[11px] text-slate-500 line-clamp-1">{tpl.description}</div>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-[10px] rounded-full px-2 py-0.5 font-mono">
-                    {tpl.format}
-                  </Badge>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                    <Badge variant="outline">{tpl.format}</Badge>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
 
-        {/* Right Column: Visual Findings & Admissibility Meter (6 cols) */}
-        <div className="lg:col-span-6 space-y-4">
+        <div className="lg:sticky lg:top-20">
           {preCheckResult ? (
-            <Card className="rounded-3xl border-slate-200/80 shadow-sm overflow-hidden">
-              
-              {/* Financial Hero Header (Fintech Dark Card) */}
-              <div className="p-6 bg-slate-950 text-white rounded-t-3xl relative overflow-hidden">
-                <div className="relative z-10 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                      Simulation Result
-                    </span>
-                    <Badge variant="lime" className="text-[10px] px-2 py-0.5">
-                      Check ID: {preCheckResult.check_id}
-                    </Badge>
-                  </div>
-
-                  {/* Admissible Big Number */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-xs text-slate-400 block font-medium">Est. Admissible</span>
-                      <span className="text-3xl font-extrabold text-[#A3FF12] tracking-tight">
-                        {formatCurrencyINR(preCheckResult.estimated_approved_amount)}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs text-slate-400 block font-medium">Deductions Risk</span>
-                      <span className="text-2xl font-bold text-purple-400 tracking-tight">
-                        -{formatCurrencyINR(preCheckResult.estimated_deductions)}
-                      </span>
+            <section className="animate-rise overflow-hidden rounded-card bg-surface shadow-raised" aria-label="Pre-check result">
+              <div className="bg-peacock-800 p-6 text-white">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-small font-semibold text-peacock-200">Estimated outcome</span>
+                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 font-mono text-tiny text-peacock-100">{preCheckResult.check_id}</span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-small text-peacock-200">Likely admissible</div>
+                    <div className="figures text-[32px] font-semibold leading-tight tracking-[-0.02em] text-marigold-300">
+                      {formatCurrencyINR(preCheckResult.estimated_approved_amount)}
                     </div>
                   </div>
-
-                  {/* Split Visual Progress Bar */}
-                  <div className="space-y-1.5 pt-1">
-                    <div className="flex justify-between text-[11px] text-slate-400 font-semibold">
-                      <span>Admissible: {approvedPct}%</span>
-                      <span>Deductions: {deductionPct}%</span>
-                    </div>
-                    <div className="h-3 w-full bg-slate-800 rounded-full overflow-hidden flex p-0.5">
-                      <div
-                        style={{ width: `${approvedPct}%` }}
-                        className="h-full bg-[#A3FF12] rounded-full transition-all duration-500"
-                      />
-                      <div
-                        style={{ width: `${deductionPct}%` }}
-                        className="h-full bg-[#8B5CF6] rounded-full ml-1 progress-hatched transition-all duration-500"
-                      />
+                  <div className="text-right">
+                    <div className="text-small text-peacock-200">Deduction risk</div>
+                    <div className="figures text-[24px] font-semibold leading-tight tracking-[-0.02em]">
+                      −{formatCurrencyINR(preCheckResult.estimated_deductions)}
                     </div>
                   </div>
+                </div>
+                <div className="mt-5 flex h-2.5 w-full gap-[2px]" role="img" aria-label={`Admissible ${approvedPct}%, deductions ${deductionPct}%`}>
+                  <div className="h-full rounded-l-[4px] bg-peacock-300" style={{ width: `${approvedPct}%` }} />
+                  <div className="h-full rounded-r-[4px] bg-marigold-400" style={{ width: `${deductionPct}%` }} />
+                </div>
+                <div className="mt-2 flex justify-between text-tiny text-peacock-200">
+                  <span>Admissible {approvedPct}%</span>
+                  <span>Deductions {deductionPct}%</span>
                 </div>
               </div>
 
-              {/* Deduction Analysis Cards */}
-              <CardContent className="p-6 space-y-4 text-xs">
-                
-                {/* Detected Issues */}
+              <div className="space-y-5 p-6">
                 <div>
-                  <div className="flex items-center justify-between mb-2.5">
-                    <span className="font-bold text-slate-900 flex items-center space-x-1.5">
-                      <ShieldAlert className="w-4 h-4 text-amber-500" />
-                      <span>Anticipated Deductions ({preCheckResult.detected_issues?.length || 0})</span>
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-medium">Pre-Submission Shield</span>
+                  <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-ink">
+                    <ShieldAlert className="h-4 w-4 text-sand-600" />
+                    Likely deductions ({preCheckResult.detected_issues?.length || 0})
                   </div>
-
-                  <div className="space-y-2">
+                  <ul className="space-y-2">
                     {preCheckResult.detected_issues?.map((iss, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-2xl transition-colors"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-slate-900 text-xs">{iss.item}</span>
-                          <span className="font-bold text-purple-600 font-mono">
-                            -{formatCurrencyINR(iss.deduction_inr)}
-                          </span>
+                      <li key={idx} className="rounded-xl bg-ground p-3.5">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-sm font-semibold text-ink">{iss.item}</span>
+                          <span className="figures shrink-0 text-sm font-semibold text-vermilion-700">−{formatCurrencyINR(iss.deduction_inr)}</span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">{iss.reason}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Billing Desk Advice */}
-                <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-100">
-                  <div className="flex items-center space-x-1.5 text-blue-900 font-bold text-xs mb-1.5">
-                    <Info className="w-3.5 h-3.5 text-blue-600" />
-                    <span>How to Avoid Deductions:</span>
-                  </div>
-                  <ul className="space-y-1 text-slate-700 text-[11px] list-disc list-inside">
-                    {preCheckResult.suggestions?.map((sug, i) => (
-                      <li key={i}>{sug}</li>
+                        <p className="mt-1 text-small leading-relaxed text-ink-3">{iss.reason}</p>
+                      </li>
                     ))}
                   </ul>
                 </div>
 
-                {/* Convert to Formal Claim CTA */}
-                <div className="pt-2">
-                  <Button
-                    onClick={handleConvertToFormalClaim}
-                    className="w-full h-11 rounded-full text-xs font-bold bg-[#A3FF12] hover:bg-[#8ee408] text-slate-950 gap-2 shadow-xs cursor-pointer"
-                  >
-                    <span>Create Claim</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                {preCheckResult.suggestions?.length > 0 && (
+                  <div className="rounded-xl bg-peacock-50 p-4">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-small font-semibold text-peacock-800">
+                      <Info className="h-4 w-4" />
+                      How to avoid them
+                    </div>
+                    <ul className="space-y-1.5">
+                      {preCheckResult.suggestions.map((sug, i) => (
+                        <li key={i} className="flex gap-2 text-small text-ink-2">
+                          <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-peacock-400" />
+                          {sug}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <Button variant="proceed" size="lg" className="w-full" onClick={() => setConfirmOpen(true)}>
+                  Create claim from this check
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </section>
           ) : (
-            /* Empty State: Sleek Fintech Placeholder */
-            <div className="fintech-card p-12 text-center text-slate-500 space-y-4">
-              <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                <FileCheck2 className="w-6 h-6" />
-              </div>
-              <div className="space-y-1 max-w-sm mx-auto">
-                <h3 className="text-sm font-bold text-slate-900">Run Pre-Audit Simulation</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Select a quick test scenario above or enter draft bill details, then click "Run Pre-Submission Audit" to see instant deduction risk analysis.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleRunPreCheck()}
-                className="rounded-full text-xs font-semibold"
-              >
-                <Zap className="w-3.5 h-3.5 mr-1 text-blue-600" />
-                <span>Simulate Demo Bill</span>
+            <section className="flex flex-col items-center rounded-card bg-surface px-6 py-14 text-center shadow-card">
+              <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-peacock-50 text-peacock-600">
+                <FileCheck2 className="h-6 w-6" strokeWidth={1.75} />
+              </span>
+              <h3 className="text-lg font-semibold text-ink">Check a bill before you file it</h3>
+              <p className="mt-1 max-w-sm text-sm text-ink-3">
+                Pick a scenario or enter the bill details, then run the check to see what the insurer is likely to deduct.
+              </p>
+              <Button variant="secondary" className="mt-6" onClick={() => handleRunPreCheck()} loading={running}>
+                {!running && <Zap className="h-4 w-4 text-peacock-500" />}
+                Try with the demo bill
               </Button>
-            </div>
+            </section>
           )}
         </div>
       </div>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent onClose={() => setConfirmOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Create a claim for {form.patient_name || "this patient"}?</DialogTitle>
+            <DialogDescription>It's saved as a draft. The 3-hour SLA starts only after you attach the documents and submit it to the insurer.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={creating}>
+              Not yet
+            </Button>
+            <Button variant="proceed" onClick={handleConvertToFormalClaim} loading={creating}>
+              {creating ? "Creating…" : "Create draft claim"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

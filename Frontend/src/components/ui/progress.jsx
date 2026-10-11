@@ -1,7 +1,6 @@
-import * as React from "react"
 import { cn } from "../../lib/utils"
 
-export function Progress({ value = 0, max = 100, className, indicatorClassName }) {
+export function Progress({ value = 0, max = 100, className, indicatorClassName, label }) {
   const percentage = Math.min(Math.max((value / max) * 100, 0), 100)
 
   return (
@@ -10,14 +9,12 @@ export function Progress({ value = 0, max = 100, className, indicatorClassName }
       aria-valuemin={0}
       aria-valuemax={max}
       aria-valuenow={value}
-      className={cn("relative h-2 w-full overflow-hidden rounded-full bg-slate-100", className)}
+      aria-label={label}
+      className={cn("relative h-1.5 w-full overflow-hidden rounded-full bg-sunken", className)}
     >
       <div
-        className={cn(
-          "h-full w-full flex-1 bg-blue-600 transition-all duration-300 ease-in-out",
-          indicatorClassName
-        )}
-        style={{ transform: `translateX(-${100 - percentage}%)` }}
+        className={cn("h-full w-full origin-left rounded-full bg-peacock-500 transition-transform duration-500 ease-out-strong", indicatorClassName)}
+        style={{ transform: `scaleX(${percentage / 100})` }}
       />
     </div>
   )

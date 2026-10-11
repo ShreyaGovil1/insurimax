@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react"
 import { Calculator, Plus, Save, Trash2, X } from "lucide-react"
-import { formatCurrencyINR } from "../../lib/utils"
+import { cn, formatCurrencyINR } from "../../lib/utils"
 import { Button } from "../ui/button"
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../ui/dialog"
 
 /**
  * Form editor for one document's extracted data. The form is built from the shape of the data:
@@ -49,9 +50,10 @@ const fieldKind = (key, value) => {
 
 function FieldInput({ fieldKey, value, onChange, compact = false }) {
   const kind = fieldKind(fieldKey, value)
-  const base = `w-full border border-slate-300 rounded-md bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
-    compact ? "px-1.5 py-1 text-[11px]" : "px-2 py-1.5 text-xs"
-  }`
+  const base = cn(
+    "w-full rounded-lg bg-surface text-ink ring-1 ring-inset ring-line-strong transition-shadow focus:outline-none focus:ring-2 focus:ring-peacock-500",
+    compact ? "px-2 py-1 text-small" : "px-2.5 py-2 text-sm"
+  )
   if (kind === "boolean") {
     return (
       <select
@@ -70,7 +72,7 @@ function FieldInput({ fieldKey, value, onChange, compact = false }) {
       <input
         type="number"
         step="any"
-        className={`${base} text-right font-mono`}
+        className={cn(base, "figures text-right")}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
       />
@@ -91,17 +93,17 @@ function ListEditor({ name, items, onChange }) {
   const list = items || []
   return (
     <div className="space-y-1.5">
-      <div className="text-[11px] font-semibold text-slate-600">{humanize(name)}</div>
+      <div className="text-small font-semibold text-ink-2">{humanize(name)}</div>
       {list.map((item, i) => (
         <div key={i} className="flex items-center gap-1.5">
           <FieldInput fieldKey={name} value={item} onChange={(v) => onChange(list.map((x, j) => (j === i ? v : x)))} />
-          <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-red-600" onClick={() => onChange(list.filter((_, j) => j !== i))} title="Remove">
-            <X className="w-3.5 h-3.5" />
+          <Button type="button" size="icon-sm" variant="ghost" className="hover:bg-vermilion-50 hover:text-vermilion-700" onClick={() => onChange(list.filter((_, j) => j !== i))} title="Remove" aria-label="Remove">
+            <X className="h-3.5 w-3.5" />
           </Button>
         </div>
       ))}
-      <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={() => onChange([...list, ""])}>
-        <Plus className="w-3 h-3" /> Add
+      <Button type="button" size="sm" variant="secondary" onClick={() => onChange([...list, ""])}>
+        <Plus className="h-3.5 w-3.5" /> Add
       </Button>
     </div>
   )
@@ -145,39 +147,39 @@ function RowsEditor({ name, rows, onChange }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-[11px] font-semibold text-slate-600">
-          {humanize(name)} <span className="text-slate-400 font-normal">({list.length})</span>
+        <div className="text-small font-semibold text-ink-2">
+          {humanize(name)} <span className="font-normal text-ink-3">({list.length})</span>
         </div>
-        <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] gap-1" onClick={addRow}>
-          <Plus className="w-3 h-3" /> Add row
+        <Button type="button" size="sm" variant="secondary" onClick={addRow}>
+          <Plus className="h-3.5 w-3.5" /> Add row
         </Button>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full text-xs">
-          <thead className="bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+      <div className="overflow-x-auto rounded-xl ring-1 ring-line">
+        <table className="w-full text-small">
+          <thead className="bg-ground text-tiny font-semibold text-ink-3">
             <tr>
               {columns.map((c) => (
-                <th key={c} className="py-1.5 px-2 text-left whitespace-nowrap">{humanize(c)}</th>
+                <th key={c} className="whitespace-nowrap px-2 py-2 text-left font-semibold">{humanize(c)}</th>
               ))}
-              <th className="py-1.5 px-2 w-8" />
+              <th className="w-10 px-2 py-2" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line">
             {list.length === 0 && (
               <tr>
-                <td colSpan={columns.length + 1} className="py-3 text-center text-[11px] text-slate-400">No rows. Use “Add row”.</td>
+                <td colSpan={columns.length + 1} className="py-4 text-center text-small text-ink-3">No rows yet. Use “Add row”.</td>
               </tr>
             )}
             {list.map((row, i) => (
-              <tr key={i} className={row.manually_added ? "bg-emerald-50/60" : row.manually_edited ? "bg-amber-50/60" : ""}>
+              <tr key={i} className={row.manually_added ? "bg-leaf-50/70" : row.manually_edited ? "bg-sand-50/80" : ""}>
                 {columns.map((c) => (
                   <td key={c} className={`py-1 px-1.5 ${c === "item_name" || c === "benefit" || c === "name" ? "min-w-[200px]" : "min-w-[90px]"}`}>
                     <FieldInput compact fieldKey={c} value={row?.[c]} onChange={(v) => updateCell(i, c, v)} />
                   </td>
                 ))}
                 <td className="py-1 px-1 text-center">
-                  <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-red-600" onClick={() => onChange(list.filter((_, j) => j !== i))} title="Remove row">
-                    <Trash2 className="w-3.5 h-3.5" />
+                  <Button type="button" size="icon-sm" variant="ghost" className="hover:bg-vermilion-50 hover:text-vermilion-700" onClick={() => onChange(list.filter((_, j) => j !== i))} title="Remove row" aria-label="Remove row">
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </td>
               </tr>
@@ -202,7 +204,7 @@ function ObjectEditor({ value, onChange, path = [] }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {scalars.map(([k, v]) => (
             <label key={k} className="block">
-              <span className="text-[11px] font-semibold text-slate-600">{humanize(k)}</span>
+              <span className="text-small font-semibold text-ink-2">{humanize(k)}</span>
               <div className="mt-1">
                 <FieldInput fieldKey={k} value={v} onChange={(nv) => set(k, nv)} />
               </div>
@@ -214,7 +216,7 @@ function ObjectEditor({ value, onChange, path = [] }) {
         if (Array.isArray(v)) {
           const ofRecords = v.some(isPlainObject) || (v.length === 0 && ROW_TEMPLATES[k])
           return (
-            <div key={k} className="p-3 rounded-lg border border-slate-200 bg-white">
+            <div key={k} className="rounded-xl bg-surface p-4 shadow-card">
               {ofRecords ? (
                 <RowsEditor name={k} rows={v} onChange={(nv) => set(k, nv)} />
               ) : (
@@ -224,8 +226,8 @@ function ObjectEditor({ value, onChange, path = [] }) {
           )
         }
         return (
-          <fieldset key={k} className="p-3 rounded-lg border border-slate-200 bg-white">
-            <legend className="px-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">{humanize(k)}</legend>
+          <fieldset key={k} className="rounded-xl bg-surface p-4 shadow-card">
+            <legend className="float-left mb-3 w-full text-small font-semibold text-ink">{humanize(k)}</legend>
             <ObjectEditor value={v} onChange={(nv) => set(k, nv)} path={[...path, k]} />
           </fieldset>
         )
@@ -251,40 +253,29 @@ export function ExtractedDataEditor({ data, title, onSave, onCancel }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col bg-slate-50 rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-slate-200 bg-white">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">{title || "Edit extracted data"}</h2>
-            <p className="text-[11px] text-slate-500">
-              Correct any field, add missing items or remove wrong ones. Edited rows are marked amber, added rows green.
-            </p>
-          </div>
-          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={onCancel} title="Close">
-            <X className="w-4 h-4" />
-          </Button>
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent onClose={onCancel} className="flex max-h-[92dvh] flex-col bg-ground p-0 sm:max-w-6xl">
+        <div className="border-b border-line bg-surface px-5 py-4 pr-14 sm:rounded-t-[18px]">
+          <DialogTitle className="text-body">{title || "Edit extracted data"}</DialogTitle>
+          <DialogDescription className="text-small">
+            Correct any field, add missing items or remove wrong ones. Edited rows are marked sand, added rows green.
+          </DialogDescription>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
           <ObjectEditor value={draft} onChange={setDraft} />
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-surface px-5 py-3.5 sm:rounded-b-[18px]">
           {lineItems ? (
-            <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>
-                Line items total <strong className="font-mono">{formatCurrencyINR(lineSum)}</strong> · Bill total{" "}
-                <strong className="font-mono">{formatCurrencyINR(Number(draft.total_billed_inr) || 0)}</strong>
+            <div className="flex flex-wrap items-center gap-2 text-small text-ink-3">
+              <span className="figures">
+                Line items total <strong className="font-semibold text-ink">{formatCurrencyINR(lineSum)}</strong> · Bill total{" "}
+                <strong className="font-semibold text-ink">{formatCurrencyINR(Number(draft.total_billed_inr) || 0)}</strong>
               </span>
               {Math.abs(lineSum - (Number(draft.total_billed_inr) || 0)) > 0.01 && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-[11px] gap-1"
-                  onClick={() => setDraft((d) => ({ ...d, total_billed_inr: lineSum }))}
-                >
-                  <Calculator className="w-3 h-3" /> Set bill total to line items sum
+                <Button type="button" size="sm" variant="secondary" onClick={() => setDraft((d) => ({ ...d, total_billed_inr: lineSum }))}>
+                  <Calculator className="h-3.5 w-3.5" /> Use the line items sum
                 </Button>
               )}
             </div>
@@ -292,16 +283,16 @@ export function ExtractedDataEditor({ data, title, onSave, onCancel }) {
             <span />
           )}
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onCancel} disabled={saving}>
+            <Button variant="secondary" onClick={onCancel} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
-              <Save className="w-3.5 h-3.5" />
-              <span>{saving ? "Saving..." : "Save Corrections"}</span>
+            <Button variant="success" onClick={handleSave} loading={saving}>
+              {!saving && <Save className="h-4 w-4" />}
+              {saving ? "Saving…" : "Save corrections"}
             </Button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -1,216 +1,251 @@
-import React, { useState } from "react"
-import {
-  ShieldCheck,
-  Plus,
-  User,
-  Sparkles,
-  Building2,
-  Activity,
-  Layers,
-  FileSpreadsheet,
-  ChevronDown,
-  LogOut,
-  Bell,
-  CheckCircle2,
-  Circle,
-  UserCheck,
-  Settings,
-} from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Activity, Check, ChevronDown, FileStack, Inbox, LogIn, LogOut, Plus, Settings, Loader2 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
+import { useToast } from "../ui/toast"
 import { Button } from "../ui/button"
-import { Badge } from "../ui/badge"
+import { Avatar } from "../ui/avatar"
+import { BrandLockup } from "./BrandMark"
+import { cn } from "../../lib/utils"
 
 const NAV_ITEMS = [
-  { id: "queue", path: "/queue", label: "Queue", icon: Layers },
-  { id: "claims", path: "/claims", label: "Claims", icon: FileSpreadsheet },
-  // { id: "hospital", path: "/hospital", label: "Hospital", icon: Building2 },
-  // { id: "patient", path: "/patient", label: "Patient", icon: UserCheck },
-  // { id: "policies", path: "/policies", label: "Policies", icon: ShieldCheck },
-  { id: "analytics", path: "/analytics", label: "Analytics & Audit", icon: Activity },
+  { id: "queue", path: "/queue", label: "Queue", hospitalLabel: "Desk", icon: Inbox },
+  { id: "claims", path: "/claims", label: "Claims", icon: FileStack },
+  { id: "analytics", path: "/analytics", label: "Analytics & audit", icon: Activity },
 ]
 
 const ADMIN_NAV_ITEM = { id: "admin", path: "/admin", label: "Admin", icon: Settings }
 
 const ROLE_OPTIONS = [
-  { key: "adjuster", label: "TPA Adjuster", short: "Adjuster" },
-  { key: "admin", label: "TPA Operations Admin", short: "Admin" },
-  { key: "hospital_desk", label: "Hospital Billing Desk", short: "Hospital" },
+  { key: "adjuster", label: "TPA adjuster", short: "Adjuster", hint: "Reviews and decides claims" },
+  { key: "admin", label: "TPA operations admin", short: "Admin", hint: "Users, organisations, thresholds" },
+  { key: "hospital_desk", label: "Hospital billing desk", short: "Hospital desk", hint: "Drafts and submits claims" },
 ]
 
 export function Header({ currentView, onViewChange, onNewClaim }) {
   const { user, switchRole, logout } = useAuth()
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false)
-  
-  let location = { pathname: "/queue" }
-  let navigate = () => {}
-  try {
-    location = useLocation()
-    navigate = useNavigate()
-  } catch {}
+  const { toast } = useToast()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [switching, setSwitching] = useState(null)
+  const menuRef = useRef(null)
 
+  const isHospital = user?.role === "hospital_desk"
   const navItems = user?.role === "admin" ? [ADMIN_NAV_ITEM, ...NAV_ITEMS] : NAV_ITEMS
-  const currentRoleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
+  const roleInfo = ROLE_OPTIONS.find((r) => r.key === user?.role) || ROLE_OPTIONS[0]
 
-  const handleNavigate = (item) => {
-    if (onViewChange) onViewChange(item.id)
-    if (navigate) navigate(item.path)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false)
+    document.addEventListener("mousedown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onDown)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [menuOpen])
+
+  const go = (item) => {
+    onViewChange?.(item.id)
+    navigate(item.path)
   }
 
-  const handleBrandClick = () => {
-    const home = user?.role === "admin" ? "/admin" : "/queue"
-    if (onViewChange) onViewChange(home.slice(1))
-    if (navigate) navigate(home)
+  const goHome = () => {
+    if (!user) return navigate("/login")
+    const home = user.role === "admin" ? "/admin" : "/queue"
+    onViewChange?.(home.slice(1))
+    navigate(home)
+  }
+
+  const handleSwitch = async (key) => {
+    if (key === user?.role) return setMenuOpen(false)
+    setSwitching(key)
+    try {
+      await switchRole(key)
+      setMenuOpen(false)
+      navigate(key === "admin" ? "/admin" : "/queue")
+    } catch (err) {
+      toast({ title: "Could not switch persona", description: err.message, variant: "destructive" })
+    } finally {
+      setSwitching(null)
+    }
   }
 
   const handleLogout = async () => {
-    setRoleMenuOpen(false)
+    setMenuOpen(false)
     await logout?.()
-    if (navigate) navigate("/login")
+    navigate("/login")
   }
 
-  const isItemActive = (item) => {
+  const isActive = (item) => {
     if (currentView) return currentView === item.id
-    if (location.pathname === item.path) return true
-    if (item.id === "queue" && (location.pathname === "/" || location.pathname === "")) return true
-    if (item.id === "claims" && location.pathname.startsWith("/claims")) return true
-    return location.pathname.startsWith(item.path)
+    const path = location.pathname
+    if (item.id === "queue" && (path === "/" || path === "")) return true
+    if (item.id === "claims") return path.startsWith("/claims")
+    return path === item.path || path.startsWith(item.path + "/")
   }
 
   return (
-    <header className="sticky top-0 z-40 w-full px-4 sm:px-6 pt-3 pb-2 transition-all">
-      <div className="max-w-7xl mx-auto flex items-center justify-between bg-white/90 backdrop-blur-md rounded-2xl sm:rounded-full border border-slate-200/80 px-4 py-2 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.04)]">
-        
-        {/* Brand & Live SLA status */}
-        <div
-          className="flex items-center space-x-3 cursor-pointer select-none group"
-          onClick={handleBrandClick}
+    <header className="no-print sticky top-0 z-40 bg-peacock-800 text-white shadow-[0_1px_0_rgb(255_255_255/0.06)_inset]">
+      <div className="mx-auto flex h-14 max-w-[1360px] items-center gap-4 px-4 sm:px-6 lg:gap-8">
+        <button
+          type="button"
+          onClick={goHome}
+          className="-ml-1 cursor-pointer rounded-lg px-1 py-1 transition-opacity hover:opacity-90"
+          aria-label="InsuriMax home"
         >
-          <div className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-950 text-white shadow-xs group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-5 h-5 text-[#A3FF12]" />
-          </div>
-          <div className="flex flex-col">
-            <div className="flex items-center space-x-1.5">
-              <span className="text-base font-extrabold tracking-tight text-slate-900">InsuriMax</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                Cashless Portal
-              </span>
-            </div>
-          </div>
-        </div>
+          <BrandLockup onDark />
+        </button>
 
-        {/* Center Pill Navigation (Ronas IT style) */}
-        <nav className="hidden md:flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/60">
+        {user && (
+          <nav className="hidden h-full items-stretch gap-1 md:flex" aria-label="Main">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const active = isActive(item)
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => go(item)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "relative inline-flex cursor-pointer items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors duration-150",
+                    active ? "text-white" : "text-peacock-100/75 hover:text-white"
+                  )}
+                >
+                  <Icon className={cn("h-4 w-4", active ? "text-marigold-400" : "text-peacock-200/70")} />
+                  {isHospital && item.hospitalLabel ? item.hospitalLabel : item.label}
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "absolute inset-x-3 bottom-0 h-[3px] origin-bottom rounded-t-full bg-marigold-400 transition-transform duration-200 ease-out-strong",
+                      active ? "scale-y-100" : "scale-y-0"
+                    )}
+                  />
+                </button>
+              )
+            })}
+          </nav>
+        )}
+
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          {isHospital && (
+            <Button size="sm" variant="proceed" data-action="new-claim" onClick={onNewClaim} className="gap-1.5">
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+              <span className="hidden sm:inline">New claim</span>
+            </Button>
+          )}
+
+          {!user && (
+            <Button size="sm" variant="on-dark" onClick={() => navigate("/login")}>
+              <LogIn className="h-4 w-4" />
+              Staff sign in
+            </Button>
+          )}
+
+          {user && (
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                className="flex cursor-pointer items-center gap-2.5 rounded-xl py-1 pl-1 pr-2 transition-colors hover:bg-white/10"
+                title="Account and demo personas"
+              >
+                <Avatar name={user.full_name} size="sm" />
+                <span className="hidden flex-col items-start leading-none lg:flex">
+                  <span className="text-small font-semibold text-white">{user.full_name?.split(" ")[0]}</span>
+                  <span className="mt-1 text-tiny text-peacock-200">{roleInfo.short}</span>
+                </span>
+                <ChevronDown className={cn("h-4 w-4 text-peacock-200 transition-transform duration-200", menuOpen && "rotate-180")} />
+              </button>
+
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-50 mt-2 w-72 origin-top-right animate-dialog-in rounded-xl bg-surface p-1.5 text-ink shadow-raised"
+                >
+                  <div className="flex items-center gap-3 px-2.5 py-2.5">
+                    <Avatar name={user.full_name} />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">{user.full_name}</div>
+                      <div className="truncate text-small text-ink-3">{user.email}</div>
+                    </div>
+                  </div>
+                  <div className="my-1 h-px bg-line" />
+                  <div className="px-2.5 pb-1 pt-2 text-tiny font-semibold text-ink-3">Switch demo persona</div>
+                  {ROLE_OPTIONS.map((opt) => {
+                    const current = user.role === opt.key
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={current}
+                        disabled={Boolean(switching)}
+                        onClick={() => handleSwitch(opt.key)}
+                        className={cn(
+                          "flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-ground disabled:cursor-wait",
+                          current && "bg-peacock-50 hover:bg-peacock-50"
+                        )}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className={cn("block text-sm font-semibold", current ? "text-peacock-700" : "text-ink")}>{opt.label}</span>
+                          <span className="block text-tiny text-ink-3">{opt.hint}</span>
+                        </span>
+                        {switching === opt.key ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-ink-3" />
+                        ) : current ? (
+                          <Check className="h-4 w-4 text-peacock-600" strokeWidth={2.5} />
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                  <div className="my-1 h-px bg-line" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleLogout}
+                    className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-semibold text-vermilion-700 transition-colors hover:bg-vermilion-50"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {user && (
+        <nav className="scrollbar-none flex gap-1 overflow-x-auto bg-peacock-900 px-3 py-2 md:hidden" aria-label="Main">
           {navItems.map((item) => {
             const Icon = item.icon
-            const isActive = isItemActive(item)
+            const active = isActive(item)
             return (
               <button
                 key={item.id}
-                onClick={() => handleNavigate(item)}
-                className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer ${
-                  isActive
-                    ? "bg-slate-950 text-white shadow-xs font-bold"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
-                }`}
+                type="button"
+                onClick={() => go(item)}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-small font-semibold transition-colors",
+                  active ? "bg-white/12 text-white" : "text-peacock-100/75 hover:text-white"
+                )}
               >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? "text-[#A3FF12]" : "text-slate-400"}`} />
-                <span>{item.label}</span>
+                <Icon className={cn("h-3.5 w-3.5", active ? "text-marigold-400" : "text-peacock-200/70")} />
+                {isHospital && item.hospitalLabel ? item.hospitalLabel : item.label}
               </button>
             )
           })}
         </nav>
-
-        {/* Right Section: Actions, Role Pill & User */}
-        <div className="flex items-center space-x-2 sm:space-x-3">
-          {/* New Claim Pill Button */}
-          {user?.role === "hospital_desk" && (
-          <Button
-            size="sm"
-            data-action="new-claim"
-            onClick={onNewClaim}
-            className="rounded-full bg-slate-950 hover:bg-slate-800 text-white font-semibold text-xs h-8.5 px-3.5 gap-1.5 shadow-xs cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 text-[#A3FF12]" />
-            <span className="hidden sm:inline">New Claim</span>
-          </Button>
-          )}
-
-          {/* Interactive Role Switcher Pill */}
-          <div className="relative">
-            <button
-              onClick={() => setRoleMenuOpen(!roleMenuOpen)}
-              className="flex items-center space-x-2 py-1 px-2.5 rounded-full bg-slate-100 hover:bg-slate-200/80 border border-slate-200/80 text-xs font-medium text-slate-800 transition-colors cursor-pointer"
-              title="Click to switch persona / role"
-            >
-              <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] font-bold">
-                {user?.full_name?.charAt(0) || "U"}
-              </div>
-              <span className="hidden lg:inline text-xs font-semibold">{user?.full_name?.split(" ")[0]}</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white font-bold text-slate-700 shadow-2xs">
-                {currentRoleInfo.short}
-              </span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
-            </button>
-
-            {/* Dropdown Menu */}
-            {roleMenuOpen && (
-              <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-slate-200 shadow-xl py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-3 py-1.5 border-b border-slate-100">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Switch Workspace Persona</p>
-                  <p className="text-xs font-semibold text-slate-800 mt-0.5">{user?.full_name}</p>
-                </div>
-
-                <div className="py-1">
-                  {ROLE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.key}
-                      onClick={() => {
-                        switchRole(opt.key)
-                        setRoleMenuOpen(false)
-                      }}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 cursor-pointer ${
-                        user?.role === opt.key ? "font-bold text-blue-600 bg-blue-50/50" : "text-slate-700"
-                      }`}
-                    >
-                      <span>{opt.label}</span>
-                      {user?.role === opt.key && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="pt-1 border-t border-slate-100">
-                  <button
-                    onClick={handleLogout}
-                    className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 flex items-center space-x-1.5 cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile view sub-navbar */}
-      <div className="md:hidden flex items-center space-x-1 overflow-x-auto py-2 px-1">
-        {navItems.map((item) => {
-          const isActive = isItemActive(item)
-          return (
-            <button
-              key={item.id}
-              onClick={() => handleNavigate(item)}
-              className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-semibold cursor-pointer ${
-                isActive ? "bg-slate-950 text-white" : "bg-white text-slate-600 border border-slate-200"
-              }`}
-            >
-              {item.label}
-            </button>
-          )
-        })}
-      </div>
+      )}
     </header>
   )
 }

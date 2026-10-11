@@ -1,90 +1,106 @@
-import React, { useState, useEffect } from "react"
-import {
-  AlertTriangle,
-  Clock,
-  CheckCircle2,
-  TrendingUp,
-  Search,
-  ArrowRight,
-  UserCheck,
-  AlertOctagon,
-  Sparkles,
-  Zap,
-  ShieldAlert,
-  ArrowUpRight,
-} from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { ArrowRight, Inbox, MessageCircleQuestion, Plus, RefreshCw, Search, ShieldAlert, SkipForward, Sparkles } from "lucide-react"
+import { useNavigate, useOutletContext } from "react-router-dom"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
-import { formatCurrencyINR } from "../../lib/utils"
-import { Select } from "../ui/select"
-import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card"
-import { Badge } from "../ui/badge"
+import { calculateSLARemaining, cn, formatCurrencyINR, formatRelative, greeting } from "../../lib/utils"
+import { useNow } from "../../hooks/useNow"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
+import { TabBar } from "../ui/tab-bar"
+import { EmptyState } from "../ui/empty-state"
+import { Skeleton } from "../ui/skeleton"
 import { useToast } from "../ui/toast"
+import { ClaimStatusPill } from "../common/status"
+import { MiniJourney } from "../common/JourneyRail"
+import { ClaimsTable, Panel } from "../claims/ClaimsTable"
+
+const IN_REVIEW = ["in_review", "submitted", "adjudication_in_progress"]
+const APPROVED = ["auto_approved", "approved"]
+const WITH_INSURER = ["submitted", "in_review", "documents_pending", "extraction_in_progress", "adjudication_in_progress", "auto_approved", "approved", "partially_approved"]
+const ADJUSTER_ACTION = ["submitted", "in_review", "documents_pending", "extraction_in_progress", "adjudication_in_progress"]
+
+const isFlagged = (c) => Boolean(c.has_identity_mismatch || (c.flagged_items_count && c.flagged_items_count > 0))
+const minutesLeft = (c) => (c.sla_deadline ? (new Date(c.sla_deadline).getTime() - Date.now()) / 60000 : Infinity)
+const isUrgent = (c) => c.sla_breached || minutesLeft(c) < 30
 
 export function AdjusterQueueView({ onSelectClaim }) {
   const { user } = useAuth()
   const { toast } = useToast()
-  let navigate = () => {}
-  try {
-    navigate = useNavigate()
-  } catch {}
+  const navigate = useNavigate()
+  const outlet = useOutletContext() || {}
+  const isHospital = user?.role === "hospital_desk"
+  useNow(60000)
 
-  const handleSelect = (claimId) => {
-    if (onSelectClaim) onSelectClaim(claimId)
-    if (navigate) navigate(`/claims/${claimId}`)
-  }
-
-  const [statusFilter, setStatusFilter] = useState("all") // "all" | "in_review" | "auto_approved" | "mismatch"
   const [claims, setClaims] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState("")
-  // Real queue-scoped metrics from GET /queue/stats (null until loaded or if unavailable)
   const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [updatedAt, setUpdatedAt] = useState(null)
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [skipped, setSkipped] = useState([])
 
-  const loadData = async () => {
-    setLoading(true)
+  const loadData = useCallback(async () => {
     try {
       // One queue for everything: it already includes unassigned claims
-      const [queueData, statsData] = await Promise.all([
-        api.queue.getQueue(),
-        api.queue.getStats().catch(() => null),
-      ])
+      const [queueData, statsData] = await Promise.all([api.queue.getQueue(), api.queue.getStats().catch(() => null)])
       setClaims(queueData || [])
       setStats(statsData)
+      setUpdatedAt(new Date().toISOString())
     } catch (err) {
-      toast({
-        title: "Queue Notice",
-        description: err.message || "Failed to load claims queue",
-        variant: "default",
-      })
+      toast({ title: "Couldn't refresh the queue", description: err.message || "Failed to load claims queue", variant: "warning" })
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }
+  }, [toast])
 
   useEffect(() => {
     loadData()
     const interval = setInterval(loadData, 30000)
     return () => clearInterval(interval)
-  }, [user])
+  }, [loadData, user])
 
-  const displayedList = claims
+  const refresh = () => {
+    setRefreshing(true)
+    loadData()
+  }
 
-  const inReviewCount = displayedList.filter(
-    (c) => c.status === "in_review" || c.status === "submitted" || c.status === "adjudication_in_progress"
-  ).length
-  const autoApprovedCount = displayedList.filter(
-    (c) => c.status === "auto_approved" || c.status === "approved"
-  ).length
-  const mismatchCount = displayedList.filter(
-    (c) => c.has_identity_mismatch || (c.flagged_items_count && c.flagged_items_count > 0)
-  ).length
+  const open = (claim, tab) => {
+    onSelectClaim?.(claim.id)
+    navigate(tab ? `/claims/${claim.id}/${tab}` : `/claims/${claim.id}`)
+  }
 
-  const filteredClaims = displayedList.filter((c) => {
+  const counts = useMemo(
+    () => ({
+      all: claims.length,
+      in_review: claims.filter((c) => IN_REVIEW.includes(c.status)).length,
+      auto_approved: claims.filter((c) => APPROVED.includes(c.status)).length,
+      mismatch: claims.filter(isFlagged).length,
+      draft: claims.filter((c) => c.status === "draft").length,
+      with_insurer: claims.filter((c) => WITH_INSURER.includes(c.status)).length,
+      queried: claims.filter((c) => c.status === "queried").length,
+      urgent: claims.filter((c) => c.status !== "draft" && isUrgent(c)).length,
+    }),
+    [claims]
+  )
+
+  const filters = isHospital
+    ? [
+        { value: "all", label: "All", count: counts.all },
+        { value: "draft", label: "Drafts", count: counts.draft },
+        { value: "queried", label: "Query open", count: counts.queried, attention: counts.queried > 0 },
+        { value: "with_insurer", label: "With insurer", count: counts.with_insurer },
+      ]
+    : [
+        { value: "all", label: "All cases", count: counts.all },
+        { value: "in_review", label: "In review", count: counts.in_review },
+        { value: "auto_approved", label: "Auto-approved", count: counts.auto_approved },
+        { value: "mismatch", label: "Flagged", count: counts.mismatch, attention: counts.mismatch > 0 },
+      ]
+
+  const filteredClaims = claims.filter((c) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       const matches =
@@ -93,319 +109,360 @@ export function AdjusterQueueView({ onSelectClaim }) {
         c.hospital_name?.toLowerCase().includes(q)
       if (!matches) return false
     }
-
-    if (statusFilter === "in_review") {
-      return c.status === "in_review" || c.status === "submitted" || c.status === "adjudication_in_progress"
+    switch (statusFilter) {
+      case "in_review":
+        return IN_REVIEW.includes(c.status)
+      case "auto_approved":
+        return APPROVED.includes(c.status)
+      case "mismatch":
+        return isFlagged(c)
+      case "draft":
+        return c.status === "draft"
+      case "queried":
+        return c.status === "queried"
+      case "with_insurer":
+        return WITH_INSURER.includes(c.status)
+      default:
+        return true
     }
-    if (statusFilter === "auto_approved") {
-      return c.status === "auto_approved" || c.status === "approved"
-    }
-    if (statusFilter === "mismatch") {
-      return Boolean(c.has_identity_mismatch || (c.flagged_items_count && c.flagged_items_count > 0))
-    }
-
-    return true
   })
 
-  // Urgent breach count (<30 min)
-  const urgentCount = claims.filter((c) => {
-    if (c.sla_breached) return true
-    if (!c.sla_deadline) return false
-    const diff = (new Date(c.sla_deadline).getTime() - Date.now()) / (1000 * 60)
-    return diff < 30
-  }).length
+  // The single claim to work on next: nearest deadline that is waiting on this user
+  const candidates = claims.filter((c) =>
+    isHospital ? c.status === "draft" || c.status === "queried" : ADJUSTER_ACTION.includes(c.status) || c.has_identity_mismatch
+  )
+  const remaining = candidates.filter((c) => !skipped.includes(c.id))
+  const upNext = remaining[0] || null
+
+  const firstName = user?.full_name?.split(" ")[0] || "there"
+  const summary = isHospital
+    ? `${counts.draft} draft${counts.draft === 1 ? "" : "s"} to finish, ${counts.queried} quer${counts.queried === 1 ? "y" : "ies"} from insurers, ${counts.with_insurer} with insurers.`
+    : counts.all === 0
+      ? "Your queue is clear."
+      : `${counts.all} claim${counts.all === 1 ? "" : "s"} in your queue${counts.urgent ? `, ${counts.urgent} inside the last 30 minutes of SLA.` : ". Every SLA is in the safe zone."}`
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto px-4 sm:px-6 py-4">
-      
-      {/* 4 Fintech Metric Widgets (Ronas IT style) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        {/* Widget 1: Obsidian Dark Card (Active Queue) */}
-        <div className="bg-slate-950 text-white rounded-3xl p-5 border border-slate-800 shadow-sm relative overflow-hidden flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Active Queue
-            </span>
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-[#A3FF12]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#A3FF12] animate-pulse" />
-              Live Feed
-            </span>
-          </div>
-
-          <div className="my-3">
-            <div className="text-3xl font-extrabold tracking-tight text-white">{claims.length}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Active claims in your queue</div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-300">
-            <span>Avg. Turnaround Today</span>
-            <span className="font-bold text-[#A3FF12]">
-              {stats?.avg_turnaround_minutes != null ? `${stats.avg_turnaround_minutes} min` : "None finalized yet"}
-            </span>
-          </div>
+    <div className="mx-auto max-w-[1360px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+      {/* Greeting */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-[30px]">
+            {greeting()}, {firstName}
+          </h1>
+          <p className="mt-1 text-sm text-ink-3">{loading ? "Loading your queue…" : summary}</p>
         </div>
-
-        {/* Widget 2: SLA Urgency Risk (<30m) */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              SLA Critical (&lt;30m)
-            </span>
-            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-3">
-            <div className={`text-3xl font-extrabold tracking-tight ${urgentCount > 0 ? "text-amber-600" : "text-slate-900"}`}>
-              {urgentCount}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              {urgentCount > 0 ? "Requires immediate sign-off" : "All SLAs in safe zone"}
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Breach Threshold</span>
-            <span className="font-semibold text-slate-700">IRDAI 3h Limit</span>
-          </div>
-        </div>
-
-        {/* Widget 3: AI Auto-Approved Efficiency */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              Auto-Approved
-            </span>
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-3">
-            <div className="text-3xl font-extrabold tracking-tight text-slate-900">{autoApprovedCount}</div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              {stats
-                ? `Confidence ≥ ${Math.round(stats.auto_approval_confidence_threshold * 100)}%, ≤ ${formatCurrencyINR(stats.auto_approval_max_amount_inr)}`
-                : "In the current queue"}
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span title="Non-payables, sub-limit excess and exclusions found by adjudications run today">
-              Deductions Found Today
-            </span>
-            <span className="font-bold text-emerald-600 font-mono">
-              {formatCurrencyINR(stats?.deductions_identified_today_inr || 0)}
-            </span>
-          </div>
-        </div>
-
-        {/* Widget 4: Quality & Compliance Score */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              AI Agreement Rate
-            </span>
-            <div className="p-2 rounded-xl bg-purple-50 text-purple-600">
-              <Sparkles className="w-4 h-4" />
-            </div>
-          </div>
-
-          <div className="my-3">
-            <div className="text-3xl font-extrabold tracking-tight text-slate-900">
-              {stats?.ai_agreement_rate != null ? `${stats.ai_agreement_rate}%` : "—"}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              {stats?.ai_line_items_reviewed
-                ? `${stats.ai_line_items_reviewed - stats.ai_overrides} of ${stats.ai_line_items_reviewed} AI line decisions kept (last ${stats.ai_agreement_window_days} days)`
-                : "No AI line decisions in the last 30 days"}
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Finalized Today</span>
-            <span className="font-bold text-slate-800">
-              {stats?.finalized_today ?? 0} {stats?.finalized_today === 1 ? "claim" : "claims"}
-            </span>
-          </div>
+        <div className="flex items-center gap-2">
+          <span className="text-small text-ink-3" aria-live="polite">
+            {updatedAt ? `Updated ${formatRelative(updatedAt)}` : ""}
+          </span>
+          <Button variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            Refresh
+          </Button>
         </div>
       </div>
 
-      {/* Main Queue Card with Pill Navigation & Filter */}
-      <Card className="rounded-3xl border-slate-200/80 shadow-xs overflow-hidden">
-        <CardHeader className="pb-3 border-b border-slate-100/80 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            
-            <h2 className="text-sm font-bold text-slate-900">
-              Queue <span className="text-slate-500 font-semibold">({claims.length})</span>
-            </h2>
+      {/* Up next */}
+      {loading ? (
+        <Skeleton className="h-[148px] rounded-card" />
+      ) : upNext ? (
+        <UpNextCard
+          key={upNext.id}
+          claim={upNext}
+          isHospital={isHospital}
+          position={candidates.length - remaining.length + 1}
+          total={candidates.length}
+          onOpen={open}
+          onSkip={remaining.length > 1 ? () => setSkipped((s) => [...s, upNext.id]) : null}
+          onResetSkips={skipped.length ? () => setSkipped([]) : null}
+        />
+      ) : (
+        <ClearCard isHospital={isHospital} onNewClaim={outlet.openCreateClaim} onResetSkips={skipped.length ? () => setSkipped([]) : null} />
+      )}
 
-            {/* Sleek Pill Search */}
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-              <Input
-                placeholder="Search patient, hospital..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="rounded-full pl-8 h-8.5 text-xs border-slate-200 bg-slate-50/50 focus:bg-white"
+      {/* Today */}
+      <TodayStrip stats={stats} counts={counts} isHospital={isHospital} loading={loading} />
+
+      {/* Queue */}
+      <Panel>
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <h2 className="shrink-0 text-body font-semibold text-ink">{isHospital ? "Your claims" : "Queue"}</h2>
+            <TabBar variant="segmented" size="sm" tabs={filters} value={statusFilter} onChange={setStatusFilter} ariaLabel="Filter claims" />
+          </div>
+          <div className="relative w-full lg:w-72">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+            <Input
+              type="search"
+              placeholder="Search patient, hospital, claim no."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 pl-9"
+              aria-label="Search claims"
+            />
+          </div>
+        </div>
+
+        <ClaimsTable
+          claims={filteredClaims}
+          loading={loading}
+          onOpen={(c) => open(c)}
+          variant="queue"
+          threshold={stats?.auto_approval_confidence_threshold}
+          empty={
+            claims.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                tone="positive"
+                title={isHospital ? "No claims in progress" : "Queue clear"}
+                description={
+                  isHospital
+                    ? "Start a cashless claim for a patient being discharged. It stays a draft until you submit it."
+                    : "New claims land here as hospitals submit them, sorted by the time left on their SLA."
+                }
+                action={
+                  isHospital && outlet.openCreateClaim ? (
+                    <Button variant="proceed" onClick={outlet.openCreateClaim}>
+                      <Plus className="h-4 w-4" />
+                      New claim
+                    </Button>
+                  ) : null
+                }
               />
+            ) : (
+              <EmptyState
+                icon={Search}
+                title="No claims match"
+                description="Try another name or claim number, or clear the filters."
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSearchQuery("")
+                      setStatusFilter("all")
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            )
+          }
+        />
+      </Panel>
+    </div>
+  )
+}
+
+function UpNextCard({ claim, isHospital, position, total, onOpen, onSkip, onResetSkips }) {
+  const sla = calculateSLARemaining(claim.sla_deadline)
+  const breached = claim.sla_breached || sla.isBreached
+  const draft = claim.status === "draft"
+  const queried = claim.status === "queried"
+
+  let headline
+  let action
+  let tab
+  if (isHospital) {
+    headline = draft ? "Finish this draft and send it to the insurer" : "The insurer is waiting on your answer"
+    action = draft ? "Continue draft" : "Answer query"
+    tab = draft ? "documents" : "queries"
+  } else if (claim.has_identity_mismatch) {
+    headline = "The bill's patient name doesn't match the claimant"
+    action = "Investigate"
+  } else if (!claim.ai_confidence_score) {
+    headline = "Run AI adjudication and review the decision"
+    action = "Start review"
+  } else if (claim.flagged_items_count > 0) {
+    headline = `AI flagged ${claim.flagged_items_count} line item${claim.flagged_items_count === 1 ? "" : "s"} for you to check`
+    action = "Start review"
+  } else {
+    headline = "AI decision ready: confirm and lock it"
+    action = "Start review"
+  }
+
+  const minutes = sla.remainingMinutes
+  const left = minutes == null ? null : Math.max(0, minutes)
+  const big = breached ? `${Math.abs(minutes ?? 0)}m` : left == null ? "—" : left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m`
+  const fraction = breached || left == null ? 0 : Math.min(1, left / 180)
+
+  return (
+    <section className="animate-rise overflow-hidden rounded-card bg-surface shadow-raised" aria-label="Up next">
+      <div className="grid md:grid-cols-[220px_1fr]">
+        {/* Clock */}
+        <div
+          className={cn(
+            "flex flex-row items-center justify-between gap-4 px-5 py-4 md:flex-col md:items-start md:justify-center md:py-6",
+            breached ? "bg-vermilion-600 text-white" : sla.isUrgent ? "bg-marigold-400 text-ink" : draft ? "bg-sunken text-ink" : "bg-peacock-700 text-white"
+          )}
+        >
+          <div>
+            <div className={cn("text-small font-semibold", breached || (!sla.isUrgent && !draft) ? "text-white/80" : "text-ink-2")}>
+              {draft ? "SLA not started" : breached ? "SLA breached by" : "SLA left"}
+            </div>
+            <div className="figures mt-0.5 text-[34px] font-semibold leading-none tracking-[-0.03em] [font-stretch:92%]">
+              {draft ? "Draft" : big}
             </div>
           </div>
-
-          {/* Status filter dropdown */}
-          <div className="pt-1">
-            <Select
-              aria-label="Filter cases"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full sm:w-72 rounded-full h-8 text-xs font-semibold bg-slate-50 border-slate-200 cursor-pointer"
-            >
-              <option value="all">All Cases ({displayedList.length})</option>
-              <option value="in_review">In Review / Submitted ({inReviewCount})</option>
-              <option value="auto_approved">Auto-Approved ({autoApprovedCount})</option>
-              <option value="mismatch">Identity Mismatch / Flagged ({mismatchCount})</option>
-            </Select>
-          </div>
-        </CardHeader>
-
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="py-16 text-center text-slate-500 text-xs">Loading real-time queue...</div>
-          ) : filteredClaims.length === 0 ? (
-            <div className="py-16 text-center text-slate-500 text-xs">
-              No claims match your current filters.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50/70 border-b border-slate-200/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    <th className="py-3 px-4">Claim & Patient</th>
-                    <th className="py-3 px-4">Hospital & Payer</th>
-                    <th className="py-3 px-4">Billed Amount</th>
-                    <th className="py-3 px-4">SLA Urgency</th>
-                    <th className="py-3 px-4">AI Confidence</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredClaims.map((claim) => (
-                    <tr
-                      key={claim.id}
-                      className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                      onClick={() => handleSelect(claim.id)}
-                    >
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors">
-                          {claim.claim_number}
-                        </div>
-                        <div className="text-slate-600 font-medium">{claim.patient_name}</div>
-                        {claim.has_identity_mismatch && (
-                          <div className="inline-flex items-center gap-1 text-[9px] font-black text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 mt-1 shadow-2xs">
-                            <ShieldAlert className="w-2.5 h-2.5" />
-                            <span>Bill Name Mismatch</span>
-                          </div>
-                        )}
-                        {claim.policy_number && (
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">Pol: {claim.policy_number}</div>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-800">{claim.hospital_name}</div>
-                        <div className="text-[11px] text-slate-500">{claim.insurer_name}</div>
-                      </td>
-
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 text-xs">
-                          {formatCurrencyINR(claim.billed_amount)}
-                        </div>
-                        {claim.approved_amount !== null && claim.approved_amount !== undefined && (
-                          <div className="text-[10px] text-emerald-600 font-medium">
-                            Approved: {formatCurrencyINR(claim.approved_amount)}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        {claim.status === "draft" ? (
-                          <span className="text-[11px] text-slate-500">Draft: starts on submission</span>
-                        ) : (
-                          <SLAUrgencyBadge
-                            slaDeadline={claim.sla_deadline}
-                            isBreached={claim.sla_breached}
-                          />
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4">
-                        {claim.ai_confidence_score ? (
-                          <div className="flex items-center space-x-1.5">
-                            <span className="font-bold text-slate-800">
-                              {Math.round(claim.ai_confidence_score * 100)}%
-                            </span>
-                            {claim.ai_confidence_score >= 0.92 ? (
-                              <Badge variant="lime" className="text-[9px] px-1.5 py-0 h-4">High</Badge>
-                            ) : (
-                              <Badge variant="warning" className="text-[9px] px-1.5 py-0 h-4">Review</Badge>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">Pending OCR</span>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4">
-                        {claim.status === "auto_approved" ? (
-                          <Badge variant="lime" className="text-[10px] font-black gap-1 uppercase tracking-wider">
-                            <Sparkles className="w-2.5 h-2.5" />
-                            <span>Auto-Approved</span>
-                          </Badge>
-                        ) : claim.has_identity_mismatch ? (
-                          <Badge variant="destructive" className="text-[10px] font-black gap-1 uppercase tracking-wider">
-                            <AlertOctagon className="w-2.5 h-2.5" />
-                            <span>Flagged Mismatch</span>
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant={
-                              claim.status === "approved"
-                                ? "lime"
-                                : claim.status === "queried"
-                                ? "warning"
-                                : "secondary"
-                            }
-                            className="capitalize text-[10px] font-bold"
-                          >
-                            {claim.status?.replace("_", " ")}
-                          </Badge>
-                        )}
-                      </td>
-
-                      <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end space-x-1.5">
-                          <Button
-                            size="sm"
-                            onClick={() => handleSelect(claim.id)}
-                            className="rounded-full h-7.5 px-3 text-xs font-bold bg-slate-950 hover:bg-slate-800 text-white gap-1 shadow-2xs cursor-pointer"
-                          >
-                            <span>Open</span>
-                            <ArrowRight className="w-3 h-3 text-[#A3FF12]" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {!draft && (
+            <div className="w-28 md:w-full">
+              <div className={cn("h-1.5 overflow-hidden rounded-full", breached || !sla.isUrgent ? "bg-white/20" : "bg-ink/15")}>
+                <div
+                  className={cn("h-full origin-left rounded-full", breached ? "bg-white" : sla.isUrgent ? "bg-ink" : "bg-marigold-400")}
+                  style={{ transform: `scaleX(${breached ? 1 : fraction})` }}
+                />
+              </div>
+              <div className={cn("mt-1.5 text-tiny", breached || !sla.isUrgent ? "text-white/70" : "text-ink-2")}>of the 3-hour window</div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-    </div>
+        {/* Claim */}
+        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-2 text-small font-semibold text-ink-3">
+              <span className="inline-flex items-center gap-1.5 text-marigold-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-marigold-500" />
+                Up next{total > 1 ? ` · ${position} of ${total}` : ""}
+              </span>
+              <span className="font-mono font-normal">{claim.claim_number}</span>
+              <ClaimStatusPill status={claim.status} />
+            </div>
+            <div className="text-[22px] font-semibold leading-tight tracking-[-0.015em] text-ink">{claim.patient_name}</div>
+            <p className="flex items-center gap-1.5 text-sm text-ink-2">
+              {claim.has_identity_mismatch ? (
+                <ShieldAlert className="h-4 w-4 text-vermilion-600" />
+              ) : queried ? (
+                <MessageCircleQuestion className="h-4 w-4 text-sand-600" />
+              ) : (
+                <Sparkles className="h-4 w-4 text-peacock-500" />
+              )}
+              {headline}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1 text-small text-ink-3">
+              <span className="truncate">{claim.hospital_name}</span>
+              <span className="figures font-semibold text-ink-2">{formatCurrencyINR(claim.billed_amount)} billed</span>
+              <MiniJourney status={claim.status} className="w-32" showLabel={false} />
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {onSkip ? (
+              <Button variant="ghost" onClick={onSkip} title="Show the next claim instead">
+                <SkipForward className="h-4 w-4" />
+                Skip
+              </Button>
+            ) : onResetSkips ? (
+              <Button variant="ghost" onClick={onResetSkips}>
+                Back to first
+              </Button>
+            ) : null}
+            <Button variant="proceed" size="lg" onClick={() => onOpen(claim, tab)} className="group">
+              {action}
+              <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ClearCard({ isHospital, onNewClaim, onResetSkips }) {
+  return (
+    <section className="flex flex-col items-start gap-4 rounded-card bg-surface p-5 shadow-card sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-4">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-leaf-50 text-leaf-600">
+          <Sparkles className="h-5 w-5" />
+        </div>
+        <div>
+          <div className="text-body font-semibold text-ink">{isHospital ? "Nothing is waiting on you" : "Nothing needs your decision right now"}</div>
+          <p className="text-small text-ink-3">
+            {isHospital
+              ? "Drafts you start and queries from insurers will show up here first."
+              : "Claims that need a review will surface here, most urgent first."}
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        {onResetSkips && (
+          <Button variant="secondary" onClick={onResetSkips}>
+            Show skipped claims
+          </Button>
+        )}
+        {isHospital && onNewClaim && (
+          <Button variant="proceed" onClick={onNewClaim}>
+            <Plus className="h-4 w-4" />
+            New claim
+          </Button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function TodayStrip({ stats, counts, isHospital, loading }) {
+  const items = isHospital
+    ? [
+        { label: "Drafts to finish", value: counts.draft, hint: "Not visible to insurers yet" },
+        { label: "Queries waiting", value: counts.queried, hint: "Insurer asked for clarification", alert: counts.queried > 0 },
+        { label: "With insurers", value: counts.with_insurer, hint: "SLA clock running" },
+        {
+          label: "Avg. turnaround today",
+          value: stats?.avg_turnaround_minutes != null ? `${stats.avg_turnaround_minutes} min` : "—",
+          hint: "Submission to decision",
+        },
+      ]
+    : [
+        {
+          label: "Avg. turnaround today",
+          value: stats?.avg_turnaround_minutes != null ? `${stats.avg_turnaround_minutes} min` : "—",
+          hint: stats?.avg_turnaround_minutes != null ? "Submission to decision" : "None finalized yet",
+        },
+        {
+          label: "Deductions found today",
+          value: formatCurrencyINR(stats?.deductions_identified_today_inr || 0),
+          hint: "Non-payables, sub-limit excess and exclusions",
+        },
+        {
+          label: "AI agreement",
+          value: stats?.ai_agreement_rate != null ? `${stats.ai_agreement_rate}%` : "—",
+          hint: stats?.ai_line_items_reviewed
+            ? `${stats.ai_line_items_reviewed - stats.ai_overrides} of ${stats.ai_line_items_reviewed} AI decisions kept · ${stats.ai_agreement_window_days} days`
+            : "No AI line decisions in the last 30 days",
+        },
+        {
+          label: "Finalized today",
+          value: `${stats?.finalized_today ?? 0} ${stats?.finalized_today === 1 ? "claim" : "claims"}`,
+          hint: stats
+            ? `Auto-approval at ≥ ${Math.round(stats.auto_approval_confidence_threshold * 100)}% and ≤ ${formatCurrencyINR(stats.auto_approval_max_amount_inr)}`
+            : "Locked decisions",
+        },
+      ]
+
+  return (
+    <section aria-label="Today" className="grid grid-cols-2 overflow-hidden rounded-card bg-surface shadow-card lg:grid-cols-4">
+      {items.map((item, i) => (
+        <div
+          key={item.label}
+          className={cn(
+            "p-4 sm:p-5",
+            i % 2 === 1 && "border-l border-line",
+            i >= 2 && "border-t border-line lg:border-t-0",
+            i === 2 && "lg:border-l"
+          )}
+        >
+          <div className="text-small font-medium text-ink-3">{item.label}</div>
+          {loading ? (
+            <Skeleton className="mt-2 h-7 w-24" />
+          ) : (
+            <div className={cn("figures mt-1 text-[22px] font-semibold tracking-[-0.02em]", item.alert ? "text-marigold-700" : "text-ink")}>
+              {item.value}
+            </div>
+          )}
+          <div className="mt-0.5 text-tiny text-ink-3">{item.hint}</div>
+        </div>
+      ))}
+    </section>
   )
 }

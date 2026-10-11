@@ -26,12 +26,7 @@ export function Tabs({ value, defaultValue, onValueChange, className, children }
 
 export function TabsList({ className, children }) {
   return (
-    <div
-      className={cn(
-        "inline-flex h-10 items-center justify-start rounded-lg bg-slate-100 p-1 text-slate-500 border border-slate-200/80",
-        className
-      )}
-    >
+    <div role="tablist" className={cn("inline-flex items-center gap-0.5 rounded-xl bg-sunken p-1", className)}>
       {children}
     </div>
   )
@@ -44,12 +39,12 @@ export function TabsTrigger({ value, className, children }) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={isSelected}
       onClick={() => onValueChange(value)}
       className={cn(
-        "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3.5 py-1.5 text-xs font-medium transition-all focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
-        isSelected
-          ? "bg-white text-slate-900 shadow-sm font-semibold"
-          : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60",
+        "inline-flex h-8 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg px-3 text-small font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-peacock-500",
+        isSelected ? "bg-surface text-ink shadow-card" : "text-ink-3 hover:text-ink-2",
         className
       )}
     >
@@ -62,9 +57,5 @@ export function TabsContent({ value, className, children }) {
   const { value: selectedValue } = React.useContext(TabsContext)
   if (selectedValue !== value) return null
 
-  return (
-    <div className={cn("mt-4 ring-offset-background focus-visible:outline-none", className)}>
-      {children}
-    </div>
-  )
+  return <div className={cn("mt-4 animate-rise focus-visible:outline-none", className)}>{children}</div>
 }

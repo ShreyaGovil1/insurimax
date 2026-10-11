@@ -1,64 +1,60 @@
-import React, { useState, useEffect } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  Send,
-  Trash2,
-  Sparkles,
-  ShieldCheck,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  FileText,
+  AlertOctagon,
+  ArrowLeft,
+  ArrowRight,
+  CheckCheck,
   FileCheck,
-  RotateCcw,
+  FileText,
   Lock,
   MessageSquare,
-  ExternalLink,
-  ChevronRight,
-  BookOpen,
-  DollarSign,
+  RotateCcw,
   Scale,
-  Download,
-  Printer,
-  Edit3,
+  Send,
   ShieldAlert,
-  AlertOctagon,
+  Sparkles,
+  Timer,
+  Trash2,
   Unlock,
+  Hourglass,
+  FilePlus2,
+  ListChecks,
 } from "lucide-react"
 import { useParams, useNavigate } from "react-router-dom"
 import { api } from "../../services/api"
-import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
+import { cn, formatCurrencyINR } from "../../lib/utils"
+import { STAFF_ROLES } from "../../lib/status"
 import { SLAUrgencyBadge } from "../common/SLAUrgencyBadge"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
-import { Badge } from "../ui/badge"
+import { ClaimStatusPill } from "../common/status"
 import { Button } from "../ui/button"
-import { Input } from "../ui/input"
+import { Avatar } from "../ui/avatar"
+import { Skeleton } from "../ui/skeleton"
+import { TabBar } from "../ui/tab-bar"
 import { Textarea } from "../ui/textarea"
+import { Field } from "../ui/field"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
 import { useAuth } from "../../context/AuthContext"
 import { DocumentExtractionView } from "../documents/DocumentExtractionView"
 import { ClaimQueriesView } from "../queries/ClaimQueriesView"
-import { CitationButton, CitationViewer } from "../documents/CitationViewer"
+import { CitationViewer } from "../documents/CitationViewer"
 import { citationKey } from "../documents/citations"
 import { DecisionSummaryCard } from "./DecisionSummaryCard"
+import { MoneySummary } from "./MoneySummary"
+import { LineItemsPanel } from "./LineItemsPanel"
+import { ExplanationPanel } from "./ExplanationPanel"
+import { NextStepBar } from "./NextStepBar"
+import { AuditReportDialog } from "./AuditReportDialog"
+import { buildJourney, decisionMinutes, missingRequiredDocs, OUTCOME_FILTERS } from "./journey"
 
-const STAFF_ROLES = ["admin", "adjuster"]
+const TABS = ["adjudication", "documents", "queries"]
 
-// Must match _REQUIRED_FOR_SUBMISSION in the backend claims routes
-const REQUIRED_FOR_SUBMISSION = [
-  { type: "policy_document", label: "policy document" },
-  { type: "itemized_bill", label: "medical bill" },
+const AI_STEPS = [
+  "Reading the itemised bill",
+  "Matching each item to the policy wording",
+  "Checking IRDAI non-payables and sub-limits",
+  "Writing the decision summary",
 ]
-
-const OVERRIDE_REASON_LABELS = {
-  upcoding_detected: "Upcoding detected",
-  incorrect_policy_application: "Incorrect policy application",
-  document_illegible: "Document illegible",
-  clinical_necessity: "Clinical necessity",
-  hospital_clarification: "Hospital clarification",
-  adjuster_discretion: "Adjuster discretion",
-  other: "Other",
-}
 
 export function AdjudicationCockpit({ claimId: propClaimId }) {
   const { toast } = useToast()
@@ -67,32 +63,25 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   const { user } = useAuth()
   const isInsurer = STAFF_ROLES.includes(user?.role)
   const isHospital = user?.role === "hospital_desk"
-  let params = {}
-  let navigate = () => {}
-  try {
-    params = useParams() || {}
-    navigate = useNavigate()
-  } catch {
-    // Fallback if rendered outside Router context (e.g. standalone test)
-  }
+  const params = useParams()
+  const navigate = useNavigate()
 
   const claimId = propClaimId || params.claimId
 
   // Tabs live in the URL (/claims/:claimId[/documents|/queries]); local state is only a
-  // fallback when the cockpit is rendered outside the router (e.g. standalone tests).
-  const TABS = ["adjudication", "documents", "queries"]
+  // fallback when the cockpit is rendered outside a claim route (e.g. standalone tests).
   const [localTab, setLocalTab] = useState("adjudication")
   const routed = Boolean(params.claimId)
   const activeTab = routed ? (TABS.includes(params.tab) ? params.tab : "adjudication") : localTab
   const setActiveTab = (tab) => {
-    if (!routed) {
-      setLocalTab(tab)
-    } else if (navigate) {
-      navigate(tab === "adjudication" ? `/claims/${params.claimId}` : `/claims/${params.claimId}/${tab}`)
-    }
+    if (!routed) setLocalTab(tab)
+    else navigate(tab === "adjudication" ? `/claims/${params.claimId}` : `/claims/${params.claimId}/${tab}`)
   }
+
   const [claim, setClaim] = useState(null)
   const [adjudication, setAdjudication] = useState(null)
+  const [docs, setDocs] = useState(null)
+  const [queries, setQueries] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)
   // Citation open in the right-hand viewer: { citation, title } (bill line or policy passage)
   const [activeCitation, setActiveCitation] = useState(null)
@@ -100,72 +89,22 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   const [loading, setLoading] = useState(true)
   const [runningPipeline, setRunningPipeline] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Rerun confirmation: a rerun replaces every line-item decision, adjuster overrides included
   const [rerunConfirm, setRerunConfirm] = useState({ open: false, showResults: false })
-
-  // Override modal state (Phase 3)
-  const [overrideModalOpen, setOverrideModalOpen] = useState(false)
-  const [overrideItem, setOverrideItem] = useState(null)
-  const [overrideForm, setOverrideForm] = useState({
-    new_status: "approved",
-    override_reason: "clinical_necessity",
-    new_approved_amount_inr: "",
-    override_note: "",
-  })
-
-  // Finalize modal state (Phase 5)
+  const [overridingId, setOverridingId] = useState(null)
+  const [outcomeFilter, setOutcomeFilter] = useState("all")
   const [finalizeModalOpen, setFinalizeModalOpen] = useState(false)
   const [finalizeNotes, setFinalizeNotes] = useState("")
   const [finalizing, setFinalizing] = useState(false)
-
-  // Compliance Audit Report modal
+  const [justFinalized, setJustFinalized] = useState(false)
+  const [unlocking, setUnlocking] = useState(false)
   const [auditReportModalOpen, setAuditReportModalOpen] = useState(false)
   const [auditReport, setAuditReport] = useState(null)
-
-  const loadClaimData = async () => {
-    setLoading(true)
-    // Independent requests: a claim can exist before adjudication has been run (adjudication 404s),
-    // so one failure must not discard the other result.
-    const [claimRes, adjRes] = await Promise.allSettled([
-      api.claims.getById(claimId),
-      api.adjudication.get(claimId),
-    ])
-
-    if (claimRes.status === "fulfilled") {
-      setClaim(claimRes.value)
-    } else {
-      toast({
-        title: "Could not load claim",
-        description: claimRes.reason?.message || "Viewing claim in offline/cached mode",
-        variant: "destructive",
-      })
-    }
-
-    if (adjRes.status === "fulfilled") {
-      const adjData = adjRes.value
-      setAdjudication(adjData)
-
-      // Auto-select first line item if none selected
-      if (adjData?.line_items?.length > 0 && !selectedItemId) {
-        setSelectedItemId(adjData.line_items[0].id)
-        loadExplanation(adjData.line_items[0].id)
-      }
-    } else {
-      // Not adjudicated yet is an expected state, not an error
-      setAdjudication(null)
-      if (adjRes.reason?.status !== 404) {
-        toast({
-          title: "Could not load adjudication",
-          description: adjRes.reason?.message || "Adjudication data is unavailable",
-          variant: "destructive",
-        })
-      }
-    }
-
-    setLoading(false)
-  }
+  const explanationRef = useRef(null)
+  const workAreaRef = useRef(null)
 
   const loadExplanation = async (itemId) => {
     try {
@@ -176,14 +115,69 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
     }
   }
 
+  const pickStartItem = (lineItems) => lineItems?.find((li) => li.final_status === "flagged") || lineItems?.[0] || null
+
+  const loadClaimData = async ({ keepSelection = false } = {}) => {
+    // Independent requests: a claim can exist before adjudication has been run (adjudication 404s),
+    // so one failure must not discard the other result.
+    const [claimRes, adjRes, docsRes, queriesRes] = await Promise.allSettled([
+      api.claims.getById(claimId),
+      api.adjudication.get(claimId),
+      api.documents.list(claimId),
+      api.queries.list(claimId),
+    ])
+
+    if (claimRes.status === "fulfilled") {
+      setClaim(claimRes.value)
+    } else {
+      toast({
+        title: "Couldn't load the claim",
+        description: claimRes.reason?.message || "Viewing claim in offline/cached mode",
+        variant: "destructive",
+      })
+    }
+
+    if (adjRes.status === "fulfilled") {
+      const adjData = adjRes.value
+      setAdjudication(adjData)
+      if (!keepSelection || !selectedItemId) {
+        const start = pickStartItem(adjData?.line_items)
+        if (start) {
+          setSelectedItemId(start.id)
+          loadExplanation(start.id)
+        }
+      }
+    } else {
+      // Not adjudicated yet is an expected state, not an error
+      setAdjudication(null)
+      if (adjRes.reason?.status !== 404) {
+        toast({
+          title: "Couldn't load the adjudication",
+          description: adjRes.reason?.message || "Adjudication data is unavailable",
+          variant: "destructive",
+        })
+      }
+    }
+
+    if (docsRes.status === "fulfilled") setDocs(docsRes.value || [])
+    if (queriesRes.status === "fulfilled") setQueries(queriesRes.value || [])
+    setLoading(false)
+  }
+
   useEffect(() => {
     loadClaimData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId])
 
   const handleSelectItem = (item) => {
     setActiveCitation(null)
+    setOverridingId((id) => (id === item.id ? id : null))
     setSelectedItemId(item.id)
     loadExplanation(item.id)
+    // On narrow screens the reasoning sits below the table: bring it into view
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      requestAnimationFrame(() => explanationRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }))
+    }
   }
 
   // First run goes straight through; a rerun must be confirmed because it discards overrides
@@ -199,68 +193,70 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   const handleRunAdjudication = async ({ confirmDiscardOverrides = false, showResults = false } = {}) => {
     setRerunConfirm({ open: false, showResults: false })
     setRunningPipeline(true)
+    if (showResults) setActiveTab("adjudication")
     try {
       const res = await api.adjudication.run(claimId, { confirmDiscardOverrides })
       setAdjudication(res)
-      if (showResults) setActiveTab("adjudication")
+      setOutcomeFilter("all")
+      setOverridingId(null)
       // Reload claim record so status, billed amount, and badges update immediately
       const updatedClaim = await api.claims.getById(claimId).catch(() => null)
       if (updatedClaim) setClaim(updatedClaim)
 
+      const flagged = res.line_items?.filter((li) => li.final_status === "flagged").length || 0
       toast({
-        title: "Adjudication Complete",
-        description: "Gemini evaluated all line items against policy rules and verified bill validity.",
+        title: "Adjudication complete",
+        description: flagged
+          ? `Every line item was checked against the policy. ${flagged} item${flagged === 1 ? " needs" : "s need"} your review.`
+          : "Every line item was checked against the policy and the bill's validity was verified.",
         variant: "success",
       })
-      if (res.line_items?.length > 0) {
-        handleSelectItem(res.line_items[0])
-      }
+      const start = pickStartItem(res.line_items)
+      if (start) handleSelectItem(start)
     } catch (err) {
       if (err.status === 409) {
         // Overrides were added since this page loaded: refresh and ask again
-        await loadClaimData()
+        await loadClaimData({ keepSelection: true })
         setRerunConfirm({ open: true, showResults })
         return
       }
-      toast({
-        title: "Adjudication Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Adjudication failed", description: err.message, variant: "destructive" })
     } finally {
       setRunningPipeline(false)
     }
   }
 
   // Hospital hands the draft to the insurer; this is what starts the SLA clock
-  const handleSubmitClaim = async () => {
+  const requestSubmitClaim = async () => {
     // Mirror the server rule up front so the hospital learns exactly what is missing
-    const docs = await api.documents.list(claimId).catch(() => null)
-    if (docs) {
-      const types = new Set(docs.map((d) => d.doc_type))
-      const missing = REQUIRED_FOR_SUBMISSION.filter((r) => !types.has(r.type)).map((r) => r.label)
-      if (missing.length) {
-        toast({
-          title: "Documents Missing",
-          description: `Attach the ${missing.join(" and the ")} before submitting the claim to the insurer.`,
-          variant: "destructive",
-        })
-        setActiveTab("documents")
-        return
-      }
+    const fresh = await api.documents.list(claimId).catch(() => null)
+    if (fresh) setDocs(fresh)
+    const missing = missingRequiredDocs(fresh || docs)
+    if (missing?.length) {
+      toast({
+        title: "Documents missing",
+        description: `Attach the ${missing.map((m) => m.label).join(" and the ")} before submitting the claim to the insurer.`,
+        variant: "destructive",
+      })
+      setActiveTab("documents")
+      return
     }
-    if (!window.confirm("Submit this claim to the insurer? The 3-hour SLA starts now and documents can no longer be deleted.")) return
+    setSubmitConfirmOpen(true)
+  }
+
+  const handleSubmitClaim = async () => {
     setSubmitting(true)
     try {
       const updated = await api.claims.submit(claimId)
       setClaim(updated)
+      setSubmitConfirmOpen(false)
       toast({
-        title: "Claim Submitted",
-        description: `${updated.claim_number} is now with ${updated.insurer_name || "the insurer"}. 3-hour IRDAI SLA started.`,
+        title: "Claim submitted",
+        description: `${updated.claim_number} is now with ${updated.insurer_name || "the insurer"}. The 3-hour IRDAI SLA has started.`,
         variant: "success",
       })
     } catch (err) {
-      toast({ title: "Submission Failed", description: err.message, variant: "destructive" })
+      toast({ title: "Submission failed", description: err.message, variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
@@ -271,11 +267,11 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
     setDeleting(true)
     try {
       await api.claims.delete(claimId)
-      toast({ title: "Draft Deleted", description: `${claim?.claim_number} and its documents were deleted.`, variant: "success" })
+      toast({ title: "Draft deleted", description: `${claim?.claim_number} and its documents were deleted.`, variant: "success" })
       setDeleteConfirmOpen(false)
-      if (navigate) navigate("/claims")
+      navigate("/claims")
     } catch (err) {
-      toast({ title: "Delete Failed", description: err.message, variant: "destructive" })
+      toast({ title: "Couldn't delete the draft", description: err.message, variant: "destructive" })
     } finally {
       setDeleting(false)
     }
@@ -283,59 +279,47 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
 
   // Re-open/unlock finalized claim for audit
   const handleUnlockClaim = async () => {
+    setUnlocking(true)
     try {
       await api.claims.updateStatus(claimId, "in_review", "Unlocked for audit review and re-adjudication")
-      await loadClaimData()
+      await loadClaimData({ keepSelection: true })
+      setJustFinalized(false)
       toast({
-        title: "Claim Unlocked",
-        description: "Status reset to In Review. You can now re-audit or rerun AI adjudication.",
+        title: "Claim unlocked",
+        description: "Status reset to In review. You can re-audit the decisions or rerun AI adjudication.",
         variant: "info",
       })
     } catch (err) {
-      toast({
-        title: "Unlock Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Unlock failed", description: err.message, variant: "destructive" })
+    } finally {
+      setUnlocking(false)
     }
   }
 
-  // Open Phase 3 Override Modal
-  const openOverrideModal = (item) => {
-    setOverrideItem(item)
-    setOverrideForm({
-      new_status: item.final_status || item.ai_status || "approved",
-      override_reason: item.override_reason || "clinical_necessity",
-      new_approved_amount_inr: item.approved_amount_inr || item.billed_amount_inr,
-      override_note: item.override_note || "",
-    })
-    setOverrideModalOpen(true)
+  const startOverride = (item) => {
+    if (item.id !== selectedItemId) handleSelectItem(item)
+    setOverridingId(item.id)
   }
 
-  // Submit Phase 3 Override
-  const handleSubmitOverride = async (e) => {
-    e.preventDefault()
-    if (!overrideItem) return
-
+  // Apply an adjuster override, recalculate totals locally, then move on to the next flagged item
+  const handleSubmitOverride = async (form) => {
+    const target = adjudication?.line_items?.find((li) => li.id === overridingId)
+    if (!target) return
     try {
-      const newApproved = parseFloat(overrideForm.new_approved_amount_inr) || 0
-      const newDeducted = Math.max(0, overrideItem.billed_amount_inr - newApproved)
-
+      const newApproved = parseFloat(form.new_approved_amount_inr) || 0
+      const newDeducted = Math.max(0, target.billed_amount_inr - newApproved)
       const payload = {
-        new_status: overrideForm.new_status,
-        override_reason: overrideForm.override_reason,
-        override_note: overrideForm.override_note,
+        new_status: form.new_status,
+        override_reason: form.override_reason,
+        override_note: form.override_note,
         new_approved_amount_inr: newApproved,
       }
 
-      await api.adjudication.overrideLineItem(claimId, overrideItem.id, payload)
+      await api.adjudication.overrideLineItem(claimId, target.id, payload)
 
-      // Update local state smoothly
-      setAdjudication((prev) => {
-        if (!prev) return prev
-        const updatedItems = prev.line_items.map((li) => {
-          if (li.id === overrideItem.id) {
-            return {
+      const updatedItems = adjudication.line_items.map((li) =>
+        li.id === target.id
+          ? {
               ...li,
               final_status: payload.new_status,
               approved_amount_inr: newApproved,
@@ -344,810 +328,540 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
               override_reason: payload.override_reason,
               override_note: payload.override_note,
             }
-          }
-          return li
-        })
+          : li
+      )
+      const totalBilled = updatedItems.reduce((acc, curr) => acc + (curr.billed_amount_inr || 0), 0)
+      const totalApproved = updatedItems.reduce((acc, curr) => acc + (curr.approved_amount_inr || 0), 0)
+      setAdjudication((prev) =>
+        prev
+          ? {
+              ...prev,
+              total_approved_inr: totalApproved,
+              total_deducted_inr: totalBilled - totalApproved,
+              flagged_items_count: updatedItems.filter((li) => li.final_status === "flagged").length,
+              line_items: updatedItems,
+            }
+          : prev
+      )
+      setExplanation((prev) =>
+        prev?.item_id === target.id ? { ...prev, final_status: payload.new_status, approved_amount_inr: newApproved, deducted_amount_inr: newDeducted } : prev
+      )
+      setOverridingId(null)
 
-        const totalBilled = updatedItems.reduce((acc, curr) => acc + (curr.billed_amount_inr || 0), 0)
-        const totalApproved = updatedItems.reduce((acc, curr) => acc + (curr.approved_amount_inr || 0), 0)
-        const totalDeducted = totalBilled - totalApproved
-
-        return {
-          ...prev,
-          total_approved_inr: totalApproved,
-          total_deducted_inr: totalDeducted,
-          line_items: updatedItems,
-        }
-      })
-
-      // Also update currently active explanation
-      if (selectedItemId === overrideItem.id) {
-        setExplanation((prev) => ({
-          ...prev,
-          final_status: payload.new_status,
-          approved_amount_inr: newApproved,
-          deducted_amount_inr: newDeducted,
-        }))
-      }
-
+      const nextFlagged = updatedItems.find((li) => li.final_status === "flagged" && li.id !== target.id)
       toast({
-        title: "Adjuster Override Applied",
-        description: `Line item #${overrideItem.line_number} updated. Claim totals recalculated.`,
+        title: "Override applied",
+        description: nextFlagged
+          ? `Line ${target.line_number} updated and totals recalculated. Next: line ${nextFlagged.line_number}.`
+          : `Line ${target.line_number} updated and claim totals recalculated.`,
         variant: "success",
       })
-      setOverrideModalOpen(false)
+      if (nextFlagged && target.final_status === "flagged") {
+        handleSelectItem(nextFlagged)
+      } else if (outcomeFilter !== "all" && !OUTCOME_FILTERS.find((f) => f.value === outcomeFilter)?.match({ final_status: payload.new_status })) {
+        setOutcomeFilter("all")
+      }
     } catch (err) {
-      toast({
-        title: "Override Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Override failed", description: err.message, variant: "destructive" })
     }
   }
 
-  // Phase 5 Finalize Adjudication
+  // Lock & finalize: records the adjuster's sign-off and the immutable compliance record
   const handleFinalize = async () => {
     setFinalizing(true)
     try {
-      const res = await api.adjudication.finalize(claimId, {
-        adjuster_notes: finalizeNotes,
-      })
+      const res = await api.adjudication.finalize(claimId, { adjuster_notes: finalizeNotes })
       setAdjudication(res)
-      setClaim((prev) => ({ ...prev, status: "finalized" }))
+      setClaim((prev) => ({ ...prev, status: "finalized", finalized_at: res?.finalized_at || new Date().toISOString() }))
+      setJustFinalized(true)
       toast({
-        title: "Adjudication Locked & Finalized",
-        description: "Immutable compliance audit record generated.",
+        title: "Decision locked",
+        description: "The compliance record has been generated.",
         variant: "success",
       })
       setFinalizeModalOpen(false)
     } catch (err) {
-      toast({
-        title: "Finalization Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't finalize", description: err.message, variant: "destructive" })
     } finally {
       setFinalizing(false)
     }
   }
 
-  // View Compliance Audit Report
   const handleViewAuditReport = async () => {
+    setAuditReport(null)
+    setAuditReportModalOpen(true)
     try {
       const rep = await api.claims.getAuditReport(claimId)
       setAuditReport(rep)
-      setAuditReportModalOpen(true)
     } catch (err) {
-      toast({
-        title: "Report Error",
-        description: err.message,
-        variant: "destructive",
-      })
+      setAuditReportModalOpen(false)
+      toast({ title: "Couldn't load the report", description: err.message, variant: "destructive" })
     }
   }
 
+  const lineItems = useMemo(() => adjudication?.line_items || [], [adjudication])
   const isFinalized = claim?.status === "finalized" || adjudication?.status === "finalized"
   const isDraft = claim?.status === "draft"
-  const selectedItem = adjudication?.line_items?.find((i) => i.id === selectedItemId)
   const hasAdjudication = Boolean(adjudication)
-  const overrideCount = adjudication?.line_items?.filter((li) => li.is_overridden).length || 0
+  const overrideCount = lineItems.filter((li) => li.is_overridden).length
+  const flaggedItems = lineItems.filter((li) => li.final_status === "flagged")
+  const mismatchFlag = (adjudication?.gemini_raw_response?.flags || []).find((f) => String(f).includes("IDENTITY MISMATCH"))
+  const mismatchText = mismatchFlag ? String(mismatchFlag).replace(/^IDENTITY MISMATCH:\s*/i, "") : ""
+  const mismatchSentence = mismatchText ? mismatchText[0].toUpperCase() + mismatchText.slice(1) : ""
+  const openQueries = (queries || []).filter((q) => q.status !== "resolved")
+  const unansweredQueries = (queries || []).filter((q) => !q.response_text && q.status !== "resolved")
+  const missingDocs = missingRequiredDocs(docs)
 
-  if (loading) {
-    return (
-      <div className="py-24 text-center text-slate-500 text-sm">
-        Loading claim adjudication workspace...
-      </div>
-    )
+  const visibleItems = lineItems.filter((OUTCOME_FILTERS.find((f) => f.value === outcomeFilter) || OUTCOME_FILTERS[0]).match)
+  const selectedItem = lineItems.find((i) => i.id === selectedItemId) || null
+  const selectedIdx = visibleItems.findIndex((i) => i.id === selectedItemId)
+
+  const reviewFlagged = () => {
+    setActiveTab("adjudication")
+    setOutcomeFilter("flagged")
+    if (flaggedItems[0]) handleSelectItem(flaggedItems[0])
+    requestAnimationFrame(() => workAreaRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }))
+  }
+
+  if (loading) return <CockpitSkeleton />
+
+  const journey = buildJourney({ claim, adjudication, docs, hasMismatch: Boolean(mismatchFlag) })
+  const insurer = claim?.insurer_name || "the insurer"
+  const minutesToDecide = decisionMinutes(claim, adjudication)
+
+  // ── What should happen next, for this role and this claim ─────────────────
+  let next = null
+  if (isHospital) {
+    if (isDraft && missingDocs?.length !== 0) {
+      next = {
+        icon: FilePlus2,
+        title: missingDocs ? `Attach the ${missingDocs.map((m) => m.label).join(" and the ")}` : "Attach the claim documents",
+        detail: `${insurer} can't see this claim until you submit it. The policy document and the itemised bill are required.`,
+        primary: (
+          <Button variant="proceed" onClick={() => setActiveTab("documents")}>
+            Add documents
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        ),
+      }
+    } else if (isDraft) {
+      next = {
+        icon: Send,
+        title: `Ready to submit to ${insurer}`,
+        detail: "Submitting starts the 3-hour IRDAI SLA. Documents can't be deleted after this.",
+        primary: (
+          <Button variant="proceed" onClick={requestSubmitClaim} loading={submitting}>
+            {!submitting && <Send className="h-4 w-4" />}
+            Submit to insurer
+          </Button>
+        ),
+      }
+    } else if (isFinalized) {
+      next = {
+        tone: "done",
+        icon: CheckCheck,
+        title: `Decision locked: ${formatCurrencyINR(adjudication?.total_approved_inr ?? claim?.approved_amount)} approved`,
+        detail: "Every deduction is explained line by line in the settlement report.",
+        primary: (
+          <Button onClick={handleViewAuditReport}>
+            <FileCheck className="h-4 w-4" />
+            View settlement report
+          </Button>
+        ),
+      }
+    } else if (unansweredQueries.length) {
+      next = {
+        icon: MessageSquare,
+        title: `${insurer} asked ${unansweredQueries.length === 1 ? "a question" : `${unansweredQueries.length} questions`}`,
+        detail: "Reply so the review can continue. The SLA clock keeps running.",
+        primary: (
+          <Button variant="proceed" onClick={() => setActiveTab("queries")}>
+            Answer query
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        ),
+      }
+    } else {
+      next = {
+        icon: Hourglass,
+        tone: "done",
+        title: `With ${insurer}`,
+        detail: "The SLA clock is running. The decision appears here as soon as the adjuster locks it.",
+      }
+    }
+  } else if (isInsurer) {
+    if (isFinalized) {
+      next = {
+        tone: "done",
+        icon: Lock,
+        title: `Finalized${minutesToDecide != null ? ` in ${minutesToDecide} min` : ""}: ${formatCurrencyINR(adjudication?.total_approved_inr ?? claim?.approved_amount)} payout`,
+        detail: "The decision is locked and the compliance record is ready.",
+        secondary: (
+          <Button variant="ghost" onClick={handleUnlockClaim} loading={unlocking}>
+            {!unlocking && <Unlock className="h-4 w-4" />}
+            Unlock for re-audit
+          </Button>
+        ),
+        primary: (
+          <Button onClick={handleViewAuditReport}>
+            <FileCheck className="h-4 w-4" />
+            Compliance record
+          </Button>
+        ),
+      }
+    } else if (!hasAdjudication) {
+      next = {
+        icon: Sparkles,
+        title: runningPipeline ? "AI is adjudicating this claim" : "Run AI adjudication",
+        detail: "Gemini reads the bill against the policy and decides every line item, with the clause behind it.",
+        primary: (
+          <Button variant="proceed" onClick={() => requestRunAdjudication({ showResults: true })} loading={runningPipeline}>
+            {!runningPipeline && <Sparkles className="h-4 w-4" />}
+            {runningPipeline ? "Analysing…" : "Run AI adjudication"}
+          </Button>
+        ),
+      }
+    } else if (mismatchFlag) {
+      next = {
+        tone: "alert",
+        icon: ShieldAlert,
+        title: "Resolve the identity mismatch",
+        detail: `${mismatchSentence} Automated approval is blocked until the names match.`,
+        secondary: (
+          <Button variant="secondary" onClick={() => setActiveTab("queries")}>
+            Raise a query
+          </Button>
+        ),
+        primary: (
+          <Button variant="proceed" onClick={() => setActiveTab("documents")}>
+            Inspect the bill
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        ),
+      }
+    } else if (flaggedItems.length) {
+      next = {
+        icon: ListChecks,
+        title: `Check ${flaggedItems.length} flagged item${flaggedItems.length === 1 ? "" : "s"}`,
+        detail: "The AI wasn't certain about these. Approve, reduce or exclude them, then lock the decision.",
+        secondary: (
+          <Button variant="ghost" onClick={() => setFinalizeModalOpen(true)}>
+            Lock anyway
+          </Button>
+        ),
+        primary: (
+          <Button variant="proceed" onClick={reviewFlagged}>
+            Review flagged item{flaggedItems.length === 1 ? "" : "s"}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        ),
+      }
+    } else if (unansweredQueries.length) {
+      next = {
+        icon: MessageSquare,
+        title: "Waiting on the hospital's reply",
+        detail: `${unansweredQueries.length} open quer${unansweredQueries.length === 1 ? "y" : "ies"}. You can still lock the decision if the answer won't change it.`,
+        secondary: (
+          <Button variant="secondary" onClick={() => setActiveTab("queries")}>
+            View queries
+          </Button>
+        ),
+        primary: (
+          <Button variant="proceed" onClick={() => setFinalizeModalOpen(true)}>
+            <Lock className="h-4 w-4" />
+            Lock & finalize
+          </Button>
+        ),
+      }
+    } else {
+      next = {
+        icon: Lock,
+        title: "Decision ready to lock",
+        detail: `${formatCurrencyINR(adjudication.total_approved_inr)} approved of ${formatCurrencyINR(adjudication.total_billed_inr)} billed. Locking records your sign-off and the compliance record.`,
+        primary: (
+          <Button variant="proceed" onClick={() => setFinalizeModalOpen(true)}>
+            <Lock className="h-4 w-4" />
+            Lock & finalize
+          </Button>
+        ),
+      }
+    }
+  }
+
+  const goBack = () => {
+    if (typeof window !== "undefined" && window.history.state?.idx > 0) navigate(-1)
+    else navigate("/queue")
   }
 
   return (
-    <div className="space-y-4 max-w-7xl mx-auto px-6 py-4">
-      {/* Top Breadcrumb & Header Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-200">
-        <div className="flex items-center space-x-3">
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-                {claim?.claim_number}
+    <div className="mx-auto max-w-[1360px] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
+      {/* Header */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={goBack}
+            className="-ml-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-small font-semibold text-ink-3 transition-colors hover:bg-sunken hover:text-ink"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </button>
+          <div className="mt-2 flex items-center gap-3.5">
+            <Avatar name={claim?.patient_name} size="lg" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-small text-ink-3">{claim?.claim_number}</span>
+                <ClaimStatusPill status={claim?.status} />
+                {adjudication?.gemini_model_used && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-peacock-50 px-2 py-0.5 text-tiny font-semibold text-peacock-700">
+                    <Sparkles className="h-3 w-3" />
+                    {adjudication.gemini_model_used}
+                  </span>
+                )}
+              </div>
+              <h1 className="mt-0.5 truncate text-[26px] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-[30px]">
+                {claim?.patient_name}
               </h1>
-              <Badge
-                variant={isFinalized ? "default" : "info"}
-                className="capitalize text-xs font-semibold"
-              >
-                {claim?.status?.replaceAll("_", " ")}
-              </Badge>
-              {adjudication?.gemini_model_used && (
-                <Badge variant="purple" className="text-[10px] gap-1 px-1.5 h-4">
-                  <Sparkles className="w-3 h-3" />
-                  <span>{adjudication.gemini_model_used}</span>
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center space-x-3 text-xs text-slate-500 mt-0.5">
-              <span>Patient: <strong className="text-slate-800">{claim?.patient_name}</strong></span>
-              <span>•</span>
-              <span>Hospital: <strong className="text-slate-800">{claim?.hospital_name}</strong></span>
-              <span>•</span>
-              <span>Insurer: <strong className="text-slate-800">{claim?.insurer_name}</strong></span>
+              <p className="mt-0.5 text-sm text-ink-3">
+                {claim?.hospital_name}
+                <span className="mx-1.5 text-ink-4">→</span>
+                {claim?.insurer_name || "Insurer not set"}
+                {claim?.policy_number && (
+                  <>
+                    <span className="mx-1.5 text-ink-4">·</span>
+                    Policy <span className="font-mono text-small">{claim.policy_number}</span>
+                  </>
+                )}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center space-x-2">
-          {isDraft ? (
-            <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-1">
-              SLA starts on submission
+        <div className="flex flex-wrap items-center gap-2 lg:flex-col lg:items-end">
+          <div className="flex items-center gap-3">
+            {isDraft ? (
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-sunken px-3 text-small font-semibold text-ink-3">
+                <Timer className="h-3.5 w-3.5" />
+                SLA starts on submission
+              </span>
+            ) : isFinalized ? (
+              minutesToDecide != null && (
+                <span
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-small font-semibold",
+                    claim?.sla_breached ? "bg-vermilion-50 text-vermilion-700" : "bg-leaf-50 text-leaf-700"
+                  )}
+                >
+                  <CheckCheck className="h-3.5 w-3.5" />
+                  Decided in {minutesToDecide} min{claim?.sla_breached ? " · SLA missed" : " · within SLA"}
+                </span>
+              )
+            ) : (
+              <SLAUrgencyBadge slaDeadline={claim?.sla_deadline} isBreached={claim?.sla_breached} showBar className="min-w-[150px]" />
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {isHospital && isDraft && (
+              <Button size="sm" variant="danger-soft" onClick={() => setDeleteConfirmOpen(true)} disabled={deleting || submitting}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete draft
+              </Button>
+            )}
+            {isInsurer && hasAdjudication && !isFinalized && (
+              <Button size="sm" variant="secondary" onClick={() => requestRunAdjudication()} loading={runningPipeline}>
+                {!runningPipeline && <RotateCcw className="h-3.5 w-3.5" />}
+                {runningPipeline ? "Re-running…" : "Rerun AI"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <NextStepBar
+        steps={journey}
+        next={next}
+        stamp={
+          isFinalized
+            ? {
+                label: "Finalized",
+                amount: adjudication?.total_approved_inr ?? claim?.approved_amount,
+                date: claim?.finalized_at || adjudication?.finalized_at,
+                animate: justFinalized,
+              }
+            : null
+        }
+      />
+
+      {/* Critical identity mismatch (the insurer sees it in the next-step bar instead) */}
+      {mismatchFlag && !(isInsurer && !isFinalized) && (
+        <div role="alert" className="flex flex-col gap-3 rounded-card bg-vermilion-50 p-4 ring-1 ring-inset ring-vermilion-200 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-vermilion-600 text-white">
+              <ShieldAlert className="h-5 w-5" />
             </span>
-          ) : (
-            <SLAUrgencyBadge
-              slaDeadline={claim?.sla_deadline}
-              isBreached={claim?.sla_breached}
+            <div>
+              <div className="text-sm font-semibold text-vermilion-800">The hospital bill's patient isn't the registered claimant</div>
+              <p className="mt-0.5 max-w-3xl text-small leading-relaxed text-vermilion-800/90">{mismatchFlag}</p>
+              <p className="mt-0.5 text-tiny font-medium text-vermilion-700">
+                Automated approval is blocked. IRDAI adjudication standards require an exact name match.
+              </p>
+            </div>
+          </div>
+          <Button size="sm" variant="danger-soft" onClick={() => setActiveTab("documents")} className="shrink-0">
+            <FileText className="h-3.5 w-3.5" />
+            Inspect bill
+          </Button>
+        </div>
+      )}
+
+      <MoneySummary claim={claim} adjudication={adjudication} />
+
+      {/* Work areas */}
+      <div ref={workAreaRef} className="scroll-mt-16 space-y-5">
+        <TabBar
+          ariaLabel="Claim sections"
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            {
+              value: "adjudication",
+              label: isHospital ? "Outcome" : "Decision",
+              icon: Scale,
+              count: lineItems.length || undefined,
+              attention: isInsurer && !isFinalized && flaggedItems.length > 0,
+            },
+            { value: "documents", label: "Documents", icon: FileText, count: docs ? docs.length : undefined, attention: isHospital && isDraft && missingDocs?.length > 0 },
+            {
+              value: "queries",
+              label: "Queries",
+              icon: MessageSquare,
+              count: queries ? queries.length : undefined,
+              attention: isHospital ? unansweredQueries.length > 0 : openQueries.some((q) => q.response_text),
+            },
+          ]}
+        />
+
+        <div key={activeTab} className="animate-rise">
+          {activeTab === "documents" && (
+            <DocumentExtractionView
+              claimId={claimId}
+              claim={claim}
+              onRunAdjudication={() => requestRunAdjudication({ showResults: true })}
+              onSwitchToAdjudication={() => setActiveTab("adjudication")}
+              runningPipeline={runningPipeline}
+              hasAdjudication={hasAdjudication}
+              onDocumentsChange={setDocs}
+              onSubmitClaim={isHospital && isDraft ? requestSubmitClaim : undefined}
             />
           )}
 
-          {isHospital && isDraft && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setDeleteConfirmOpen(true)}
-              disabled={deleting || submitting}
-              className="text-xs font-semibold gap-1.5 border-red-200 text-red-700 hover:bg-red-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Draft</span>
-            </Button>
-          )}
+          {activeTab === "queries" && <ClaimQueriesView claimId={claimId} onQueriesChange={setQueries} />}
 
-          {isHospital && isDraft && (
-            <Button
-              size="sm"
-              onClick={handleSubmitClaim}
-              disabled={submitting}
-              className="text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>{submitting ? "Submitting..." : "Submit to Insurer"}</span>
-            </Button>
-          )}
+          {activeTab === "adjudication" && (
+            <div className="space-y-5">
+              {runningPipeline && <AiAtWork count={lineItems.length} />}
 
-          {isInsurer && (
-            <Button
-              size="sm"
-              onClick={() => requestRunAdjudication()}
-              disabled={runningPipeline || isFinalized}
-              className={`text-xs font-semibold gap-1.5 shadow-sm ${
-                hasAdjudication
-                  ? "bg-amber-400 hover:bg-amber-500 text-amber-950"
-                  : "bg-[#A3FF12] hover:bg-[#8ee60e] text-slate-950"
-              }`}
-            >
-              {hasAdjudication ? (
-                <RotateCcw className={`w-3.5 h-3.5 ${runningPipeline ? "animate-spin" : ""}`} />
-              ) : (
-                <Sparkles className={`w-3.5 h-3.5 ${runningPipeline ? "animate-pulse" : ""}`} />
-              )}
-              <span>
-                {runningPipeline ? "Analyzing..." : hasAdjudication ? "Rerun AI Adjudication" : "Run AI Adjudication"}
-              </span>
-            </Button>
-          )}
+              {!hasAdjudication && !runningPipeline ? (
+                <NoDecisionYet
+                  isInsurer={isInsurer}
+                  isDraft={isDraft}
+                  insurer={insurer}
+                  onRun={() => requestRunAdjudication({ showResults: true })}
+                  onDocuments={() => setActiveTab("documents")}
+                />
+              ) : hasAdjudication ? (
+                <>
+                  {!isDraft && (
+                    <DecisionSummaryCard
+                      adjudication={adjudication}
+                      defaultOpen={!isInsurer || flaggedItems.length === 0}
+                      onSelectItem={(item) => {
+                        setOutcomeFilter("all")
+                        handleSelectItem(item)
+                      }}
+                    />
+                  )}
 
-          {isFinalized && (isInsurer || isHospital) && (
-            <div className="flex items-center space-x-2">
-              {isInsurer && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleUnlockClaim}
-                  className="text-xs font-semibold gap-1.5 border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
-                >
-                  <Unlock className="w-3.5 h-3.5" />
-                  <span>Unlock for Re-Audit</span>
-                </Button>
-              )}
-              <Button
-                size="sm"
-                onClick={handleViewAuditReport}
-                className="text-xs font-semibold gap-1.5 bg-slate-900 hover:bg-slate-800 text-white"
-              >
-                <FileCheck className="w-3.5 h-3.5" />
-                <span>{isHospital ? "View Settlement Report" : "Compliance Audit Report"}</span>
-              </Button>
-            </div>
-          )}
-
-          {isInsurer && !isFinalized && (
-            <Button
-              size="sm"
-              onClick={() => setFinalizeModalOpen(true)}
-              className="text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Lock & Finalize Decision</span>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {isDraft && isHospital && (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
-          <div>
-            <div className="font-bold">Draft: not yet visible to {claim?.insurer_name || "the insurer"}</div>
-            <p className="mt-0.5 text-amber-800">
-              Attach the documents for this claim on the documents tab (at least the <strong>policy document</strong> and
-              the <strong>medical bill</strong>), then click <strong>Submit to Insurer</strong>. The 3-hour IRDAI SLA starts at submission.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Critical Identity Mismatch / Fraud Alert Banner */}
-      {(() => {
-        const rawFlags = adjudication?.gemini_raw_response?.flags || []
-        const mismatchFlag = rawFlags.find((f) => String(f).includes("IDENTITY MISMATCH"))
-        if (!mismatchFlag) return null
-
-        return (
-          <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-950">
-            <div className="flex items-start space-x-3.5">
-              <div className="p-2.5 bg-rose-600 text-white rounded-2xl shadow-xs shrink-0 mt-0.5">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-black uppercase tracking-wider bg-rose-600 text-white px-2.5 py-0.5 rounded-full animate-pulse">
-                    Critical Identity Mismatch
-                  </span>
-                  <span className="text-xs font-extrabold text-rose-900">
-                    Hospital Bill Patient ≠ Registered Claimant
-                  </span>
-                </div>
-                <p className="text-xs text-rose-800 mt-1 max-w-3xl leading-relaxed">
-                  {mismatchFlag}
-                </p>
-                <p className="text-[11px] text-rose-700 font-medium mt-0.5">
-                  Automated approval has been blocked. An exact name match is required under IRDAI claims adjudication standards.
-                </p>
-              </div>
-            </div>
-
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setActiveTab("documents")}
-              className="shrink-0 text-xs font-bold border-rose-300 bg-white text-rose-800 hover:bg-rose-100 shadow-2xs cursor-pointer gap-1.5"
-            >
-              <FileText className="w-3.5 h-3.5 text-rose-600" />
-              <span>Inspect Bill OCR</span>
-            </Button>
-          </div>
-        )
-      })()}
-
-      {/* Phase 4 Financial Summary Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-xs">
-        {/* Total Billed */}
-        <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/60">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
-            1. Total Billed
-          </span>
-          <div className="text-xl font-bold text-slate-900 mt-1">
-            {formatCurrencyINR(adjudication?.total_billed_inr || claim?.billed_amount)}
-          </div>
-          <span className="text-[10px] text-slate-500">From itemized hospital bills</span>
-        </div>
-
-        {/* Total Approved */}
-        <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-200/80">
-          <span className="text-[11px] font-semibold text-emerald-800 uppercase tracking-wider block">
-            2. Approved Amount
-          </span>
-          <div className="text-xl font-bold text-emerald-700 mt-1">
-            {formatCurrencyINR(adjudication?.total_approved_inr || claim?.approved_amount)}
-          </div>
-          <span className="text-[10px] text-emerald-700">
-            {adjudication?.total_billed_inr
-              ? `${Math.round(((adjudication.total_approved_inr || 0) / adjudication.total_billed_inr) * 100)}% Admissibility`
-              : "Calculated"}
-          </span>
-        </div>
-
-        {/* Total Deducted */}
-        <div className="p-3.5 rounded-2xl bg-red-50/70 border border-red-200/70">
-          <span className="text-[11px] font-semibold text-red-800 uppercase tracking-wider block">
-            3. Deductions & Exclusions
-          </span>
-          <div className="text-xl font-bold text-red-700 mt-1">
-            {formatCurrencyINR(adjudication?.total_deducted_inr || claim?.deducted_amount)}
-          </div>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {Object.keys(adjudication?.deduction_breakdown || {}).map((cat, idx) => (
-              <span
-                key={idx}
-                className="text-[9px] font-medium bg-red-100 text-red-800 px-1.5 py-0.5 rounded"
-                title={`${cat}: ${formatCurrencyINR(adjudication.deduction_breakdown[cat])}`}
-              >
-                {cat.split(" ")[0]}: {formatCurrencyINR(adjudication.deduction_breakdown[cat])}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* AI Confidence & Model Assessment */}
-        <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200/70 flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-blue-900 uppercase tracking-wider">
-                4. AI Confidence
-              </span>
-              <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-            </div>
-            <div className="text-xl font-bold text-blue-700 mt-1">
-              {adjudication?.confidence_score != null ? `${Math.round(adjudication.confidence_score * 100)}%` : "—"}
-            </div>
-          </div>
-          <div className="text-[11px] text-blue-800 font-medium">
-            {adjudication?.auto_approved ? (
-              <span className="text-emerald-700 font-bold">Auto-approved eligible</span>
-            ) : (
-              <span>Flagged items audited by rules</span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Overall decision summary: why items were accepted, reduced or excluded (not on hospital drafts) */}
-      {!isDraft && (
-      <DecisionSummaryCard
-        adjudication={adjudication}
-        onSelectItem={(item) => {
-          setActiveTab("adjudication")
-          handleSelectItem(item)
-        }}
-      />
-      )}
-
-      {/* Cockpit Mode Tabs (Segmented Pills) */}
-      <div className="inline-flex items-center p-1 bg-white border border-slate-200/80 rounded-full shadow-2xs">
-        <button
-          onClick={() => setActiveTab("adjudication")}
-          className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all flex items-center space-x-1.5 ${
-            activeTab === "adjudication"
-              ? "bg-slate-950 text-white font-bold shadow-2xs"
-              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-          }`}
-        >
-          <Scale className={`w-3.5 h-3.5 ${activeTab === "adjudication" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>{isHospital ? "Adjudication Outcome" : "Line-Item Adjudication"}</span>
-          <span className={`ml-1 text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-            activeTab === "adjudication" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"
-          }`}>
-            {adjudication?.line_items?.length || 0}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("documents")}
-          className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all flex items-center space-x-1.5 ${
-            activeTab === "documents"
-              ? "bg-slate-950 text-white font-bold shadow-2xs"
-              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-          }`}
-        >
-          <FileText className={`w-3.5 h-3.5 ${activeTab === "documents" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>{isHospital ? "Claim Documents" : "Hospital Documents & OCR"}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("queries")}
-          className={`px-4 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-all flex items-center space-x-1.5 ${
-            activeTab === "queries"
-              ? "bg-slate-950 text-white font-bold shadow-2xs"
-              : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-          }`}
-        >
-          <MessageSquare className={`w-3.5 h-3.5 ${activeTab === "queries" ? "text-[#A3FF12]" : "text-slate-400"}`} />
-          <span>{isHospital ? "Insurer Queries" : "Hospital Queries"}</span>
-        </button>
-      </div>
-
-      {/* Sub-view Content */}
-      {activeTab === "documents" && (
-        <DocumentExtractionView
-          claimId={claimId}
-          claim={claim}
-          onRunAdjudication={() => requestRunAdjudication({ showResults: true })}
-          onSwitchToAdjudication={() => setActiveTab("adjudication")}
-          runningPipeline={runningPipeline}
-          hasAdjudication={hasAdjudication}
-        />
-      )}
-
-      {activeTab === "queries" && (
-        <ClaimQueriesView claimId={claimId} />
-      )}
-
-      {activeTab === "adjudication" && (
-        /* Phase 2: Split-Screen Cockpit */
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* Left Column: Interactive Line Items Table (7 cols) */}
-          <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-3.5 px-4 bg-slate-50/80 border-b border-slate-200/80 flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Itemized Bill Adjudication Schedule
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  {isHospital
-                    ? "Click any line item to see the insurer's decision, its reasoning and any adjuster changes."
-                    : "Click any line item to inspect AI reasoning and verified policy clause."}
-                </p>
-              </div>
-              <span className="text-[11px] font-semibold text-slate-600">
-                {adjudication?.line_items?.length || 0} line items
-              </span>
-            </div>
-
-            <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="sticky top-0 bg-slate-100/95 backdrop-blur z-10 text-[10px] font-semibold uppercase tracking-wider text-slate-600 border-b border-slate-200">
-                  <tr>
-                    <th className="py-2.5 px-3">#</th>
-                    <th className="py-2.5 px-3">Item Description</th>
-                    <th className="py-2.5 px-3 text-right">Billed</th>
-                    <th className="py-2.5 px-3 text-right">Approved</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    {isInsurer && <th className="py-2.5 px-3 text-center">Action</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {adjudication?.line_items?.map((item) => {
-                    const isSelected = selectedItemId === item.id
-                    return (
-                      <tr
-                        key={item.id}
-                        onClick={() => handleSelectItem(item)}
-                        className={`transition-colors cursor-pointer select-none ${
-                          isSelected
-                            ? "bg-blue-50/90 font-medium border-l-4 border-l-blue-600"
-                            : "hover:bg-slate-50"
-                        }`}
-                      >
-                        <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
-                          {item.line_number}
-                        </td>
-
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-900 leading-snug">
-                            {item.item_name}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[10px] text-slate-500">{item.item_category}</span>
-                            {item.is_overridden && (
-                              <Badge variant="warning" className="text-[9px] px-1 py-0 h-3.5">
-                                Overridden
-                              </Badge>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-3 text-right font-mono font-medium text-slate-800">
-                          {formatCurrencyINR(item.billed_amount_inr)}
-                        </td>
-
-                        <td className="py-3 px-3 text-right font-mono font-bold text-emerald-700">
-                          {formatCurrencyINR(item.approved_amount_inr)}
-                        </td>
-
-                        <td className="py-3 px-3">
-                          <Badge
-                            variant={
-                              item.final_status === "approved"
-                                ? "success"
-                                : item.final_status === "non_payable" || item.final_status === "rejected"
-                                ? "destructive"
-                                : item.final_status === "partially_approved"
-                                ? "warning"
-                                : "secondary"
-                            }
-                            className="capitalize text-[10px] py-0 px-2 font-semibold"
-                          >
-                            {item.final_status?.replace("_", " ")}
-                          </Badge>
-                        </td>
-
-                        {isInsurer && (
-                          <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => openOverrideModal(item)}
-                              disabled={isFinalized}
-                              className="h-7 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                              title="Override decision"
-                            >
-                              <Edit3 className="w-3 h-3 mr-1" />
-                              <span>Override</span>
-                            </Button>
-                          </td>
-                        )}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Right Column: Phase 2 AI Reasoning & Policy Citation Panel (5 cols) */}
-          <div className="lg:col-span-5 space-y-4">
-            {explanation ? (
-              <Card className="border-slate-300 shadow-md">
-                <CardHeader className="p-4 pb-2 bg-gradient-to-r from-slate-900 to-blue-950 text-white rounded-t-xl">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300">
-                      Phase 2 Clause Citation & Reasoning
-                    </span>
-                    <Badge variant="info" className="text-[10px] px-1.5 py-0 h-4 bg-blue-500/20 text-blue-200 border-blue-400/30">
-                      Line Item #{adjudication?.line_items?.find((i) => i.id === explanation.item_id)?.line_number}
-                    </Badge>
-                  </div>
-                  <CardTitle className="text-sm font-semibold text-white mt-1">
-                    {explanation.item_name}
-                  </CardTitle>
-                </CardHeader>
-
-                <CardContent className="p-4 space-y-4">
-                  {/* Financial Breakdown for this item */}
-                  <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-50 rounded-lg text-center text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-500 block">Billed</span>
-                      <strong className="text-slate-800">{formatCurrencyINR(explanation.billed_amount_inr)}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 block">Approved</span>
-                      <strong className="text-emerald-700">{formatCurrencyINR(explanation.approved_amount_inr)}</strong>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 block">Deducted</span>
-                      <strong className="text-red-700">{formatCurrencyINR(explanation.deducted_amount_inr)}</strong>
-                    </div>
-                  </div>
-
-                  {/* AI Reasoning */}
-                  <div>
-                    <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-900 mb-1">
-                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Gemini 1.5 Pro Adjudication Reasoning:</span>
-                    </div>
-                    <div className="p-3 bg-blue-50/60 border border-blue-100 rounded-lg text-xs text-slate-700 leading-relaxed font-normal">
-                      {explanation.ai_explanation}
-                    </div>
-                  </div>
-
-                  {/* Verified Policy Clause Citation Card */}
-                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
-                    <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-900">
-                      <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Applicable Policy Clause & Schedule:</span>
+                  <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+                    <div className="lg:col-span-7">
+                      <LineItemsPanel
+                        items={lineItems}
+                        selectedId={selectedItemId}
+                        onSelect={handleSelectItem}
+                        onOverride={startOverride}
+                        canOverride={isInsurer && !isFinalized}
+                        filter={outcomeFilter}
+                        onFilterChange={setOutcomeFilter}
+                        isHospital={isHospital}
+                      />
                     </div>
 
-                    <div className="text-xs text-slate-800 font-semibold">
-                      {explanation.clause_reference || "Standard Health Insurance Schedule 2024"}
-                    </div>
+                    <div ref={explanationRef} className="scroll-mt-20 space-y-4 lg:sticky lg:top-20 lg:col-span-5 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:pb-1">
+                      <ExplanationPanel
+                        item={selectedItem}
+                        explanation={explanation}
+                        position={selectedIdx >= 0 ? selectedIdx + 1 : null}
+                        total={visibleItems.length}
+                        onPrev={selectedIdx > 0 ? () => handleSelectItem(visibleItems[selectedIdx - 1]) : null}
+                        onNext={selectedIdx >= 0 && selectedIdx < visibleItems.length - 1 ? () => handleSelectItem(visibleItems[selectedIdx + 1]) : null}
+                        canOverride={isInsurer && !isFinalized}
+                        overriding={overridingId === selectedItemId}
+                        onStartOverride={startOverride}
+                        onCancelOverride={() => setOverridingId(null)}
+                        onSubmitOverride={handleSubmitOverride}
+                        claimApprovedTotal={adjudication?.total_approved_inr}
+                        activeCitation={activeCitation?.citation}
+                        onOpenCitation={setActiveCitation}
+                        isHospital={isHospital}
+                      />
 
-                    {explanation.clause_page && (
-                      <div className="text-[11px] text-slate-500 flex items-center space-x-1">
-                        <span>Page {explanation.clause_page} in Insurer Policy Wording Contract</span>
-                      </div>
-                    )}
-
-                    {explanation.citation_data?.limit_data && (
-                      <div className="text-[11px] bg-white p-2 rounded border border-slate-200 text-slate-600 font-mono">
-                        Rule Limit: {JSON.stringify(explanation.citation_data.limit_data)}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Evidence: where the item was billed, and the policy text the decision relied on */}
-                  {(() => {
-                    const cd = selectedItem?.citation_data || explanation.citation_data || {}
-                    const billSource = cd.source
-                    const policyEvidence = cd.policy_evidence || []
-                    const isActive = (c) => activeCitation?.citation === c
-                    return (
-                      <div className="p-3.5 bg-white border border-slate-200 rounded-lg space-y-2.5 text-xs">
-                        <div className="flex items-center space-x-1.5 font-bold text-slate-900">
-                          <FileText className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Evidence & Citations</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-slate-600">Billed on the hospital bill</span>
-                          {billSource?.document_id ? (
-                            <CitationButton
-                              citation={billSource}
-                              label="View bill"
-                              active={isActive(billSource)}
-                              onClick={(c) => setActiveCitation({ citation: c, title: "Billed on" })}
-                            />
-                          ) : (
-                            <span className="text-[10px] text-slate-400">Not available: re-extract the bill</span>
-                          )}
-                        </div>
-                        <div className="space-y-1.5">
-                          <span className="text-slate-600 block">Policy text this decision relies on</span>
-                          {policyEvidence.length === 0 ? (
-                            <span className="text-[10px] text-slate-400 block">
-                              No policy passage was cited for this decision.
-                            </span>
-                          ) : (
-                            policyEvidence.map((ev) => (
-                              <div
-                                key={ev.evidence_id}
-                                className={`p-2 rounded border text-[11px] ${
-                                  isActive(ev) ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"
-                                }`}
-                              >
-                                <p className="text-slate-700 leading-relaxed line-clamp-3">“{ev.text}”</p>
-                                <div className="mt-1.5 text-right">
-                                  <CitationButton
-                                    citation={ev}
-                                    label="View in policy"
-                                    active={isActive(ev)}
-                                    onClick={(c) => setActiveCitation({ citation: c, title: "Policy clause relied on" })}
-                                  />
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })()}
-
-                  {/* Adjuster's override decision, visible to both parties */}
-                  {selectedItem?.is_overridden && (
-                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 text-xs">
-                      <div className="flex items-center space-x-1.5 font-bold text-amber-900">
-                        <Edit3 className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Adjuster Override</span>
-                      </div>
-                      <div className="text-amber-900">
-                        <span className="font-semibold">Reason: </span>
-                        {OVERRIDE_REASON_LABELS[selectedItem.override_reason] || selectedItem.override_reason || "Not specified"}
-                      </div>
-                      {selectedItem.override_note && (
-                        <div className="text-amber-800 leading-relaxed">{selectedItem.override_note}</div>
+                      {activeCitation && (
+                        <CitationViewer
+                          key={citationKey(activeCitation.citation)}
+                          claimId={claimId}
+                          citation={activeCitation.citation}
+                          title={activeCitation.title}
+                          onClose={() => setActiveCitation(null)}
+                        />
                       )}
                     </div>
-                  )}
-
-                  {/* Direct Override Action CTA */}
-                  {isInsurer && !isFinalized && (
-                    <Button
-                      onClick={() => {
-                        const itm = adjudication?.line_items?.find((i) => i.id === explanation.item_id)
-                        if (itm) openOverrideModal(itm)
-                      }}
-                      className="w-full text-xs font-semibold bg-slate-900 hover:bg-blue-600 text-white gap-1.5"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Phase 3 Adjuster Override for this Item</span>
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="p-8 text-center bg-white rounded-xl border border-slate-200 text-slate-500 text-xs">
-                Select a line item from the schedule to inspect policy citations.
-              </div>
-            )}
-
-            {activeCitation && (
-              <CitationViewer
-                key={citationKey(activeCitation.citation)}
-                claimId={claimId}
-                citation={activeCitation.citation}
-                title={activeCitation.title}
-                onClose={() => setActiveCitation(null)}
-              />
-            )}
-          </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Phase 3 Adjuster Override Modal */}
-      <Dialog open={overrideModalOpen} onOpenChange={setOverrideModalOpen}>
-        <DialogContent onClose={() => setOverrideModalOpen(false)}>
+      {/* Submit confirmation (hospital) */}
+      <Dialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
+        <DialogContent onClose={() => setSubmitConfirmOpen(false)}>
           <DialogHeader>
-            <DialogTitle>Phase 3: Adjuster Decision Override</DialogTitle>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-marigold-100 text-marigold-800">
+              <Send className="h-5 w-5" />
+            </div>
+            <DialogTitle>Submit this claim to {insurer}?</DialogTitle>
             <DialogDescription>
-              Modify AI adjudication status or approved amount. All overrides log reasons to the compliance audit trail.
+              The 3-hour IRDAI SLA starts now. After submitting you can still add documents and answer queries, but you can't delete documents.
             </DialogDescription>
           </DialogHeader>
-
-          <form onSubmit={handleSubmitOverride} className="space-y-4 text-xs">
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <span className="text-slate-500 block text-[11px]">Target Line Item:</span>
-              <span className="font-bold text-slate-900 text-sm">
-                #{overrideItem?.line_number} — {overrideItem?.item_name}
-              </span>
-              <div className="text-[11px] text-slate-500 mt-1">
-                Billed: {formatCurrencyINR(overrideItem?.billed_amount_inr)}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">New Adjudication Status</label>
-                <select
-                  value={overrideForm.new_status}
-                  onChange={(e) => setOverrideForm((prev) => ({ ...prev, new_status: e.target.value }))}
-                  className="w-full p-2 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 text-xs font-medium"
-                >
-                  <option value="approved">Approved</option>
-                  <option value="partially_approved">Partially Approved</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="non_payable">Non Payable</option>
-                  <option value="flagged">Flagged</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">New Approved Amount (₹ INR)</label>
-                <Input
-                  type="number"
-                  value={overrideForm.new_approved_amount_inr}
-                  onChange={(e) =>
-                    setOverrideForm((prev) => ({ ...prev, new_approved_amount_inr: e.target.value }))
-                  }
-                  max={overrideItem?.billed_amount_inr}
-                  min="0"
-                  step="0.01"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Override Reason (Audit Categorization)</label>
-              <select
-                value={overrideForm.override_reason}
-                onChange={(e) => setOverrideForm((prev) => ({ ...prev, override_reason: e.target.value }))}
-                className="w-full p-2 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 text-xs"
-              >
-                <option value="clinical_necessity">Clinical Necessity (Medical Audit Exception)</option>
-                <option value="hospital_clarification">Hospital Clarification Provided</option>
-                <option value="upcoding_detected">Upcoding Detected</option>
-                <option value="incorrect_policy_application">Incorrect Policy Application</option>
-                <option value="document_illegible">Document Illegible / Verification</option>
-                <option value="adjuster_discretion">Adjuster Discretion</option>
-                <option value="other">Other Rationale</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Adjuster Clinical Justification Note</label>
-              <Textarea
-                value={overrideForm.override_note}
-                onChange={(e) => setOverrideForm((prev) => ({ ...prev, override_note: e.target.value }))}
-                placeholder="Explain the clinical basis or policy exception rationale for compliance..."
-                rows={3}
-                required
-              />
-            </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOverrideModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
-                Apply Override & Recalculate
-              </Button>
-            </DialogFooter>
-          </form>
+          <ul className="space-y-2 rounded-xl bg-ground p-4 text-small">
+            {(docs || []).map((d) => (
+              <li key={d.id} className="flex items-center gap-2 text-ink-2">
+                <CheckCheck className="h-4 w-4 text-leaf-600" />
+                <span className="truncate">{d.original_filename}</span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setSubmitConfirmOpen(false)} disabled={submitting}>
+              Not yet
+            </Button>
+            <Button variant="proceed" onClick={handleSubmitClaim} loading={submitting}>
+              {!submitting && <Send className="h-4 w-4" />}
+              {submitting ? "Submitting…" : "Submit & start SLA"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1155,184 +869,214 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent onClose={() => setDeleteConfirmOpen(false)}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="w-4 h-4 text-red-600" />
-              <span>Delete draft {claim?.claim_number}?</span>
-            </DialogTitle>
-            <DialogDescription>
-              The draft and every document attached to it are permanently deleted. This cannot be undone.
-            </DialogDescription>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-vermilion-50 text-vermilion-600">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <DialogTitle>Delete draft {claim?.claim_number}?</DialogTitle>
+            <DialogDescription>The draft and every document attached to it are permanently deleted. This cannot be undone.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-              Cancel
+            <Button variant="secondary" onClick={() => setDeleteConfirmOpen(false)}>
+              Keep draft
             </Button>
-            <Button onClick={handleDeleteClaim} disabled={deleting} className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{deleting ? "Deleting..." : "Delete Draft"}</span>
+            <Button variant="danger" onClick={handleDeleteClaim} loading={deleting}>
+              {!deleting && <Trash2 className="h-4 w-4" />}
+              {deleting ? "Deleting…" : "Delete draft"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Rerun confirmation */}
-      <Dialog
-        open={rerunConfirm.open}
-        onOpenChange={(open) => setRerunConfirm((prev) => ({ ...prev, open }))}
-      >
+      <Dialog open={rerunConfirm.open} onOpenChange={(open) => setRerunConfirm((prev) => ({ ...prev, open }))}>
         <DialogContent onClose={() => setRerunConfirm({ open: false, showResults: false })}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertOctagon className="w-4 h-4 text-red-600" />
-              <span>Rerun AI Adjudication?</span>
-            </DialogTitle>
-            <DialogDescription>
-              This claim has already been adjudicated. A rerun replaces every line-item decision with a fresh AI result.
-            </DialogDescription>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-sand-100 text-sand-700">
+              <AlertOctagon className="h-5 w-5" />
+            </div>
+            <DialogTitle>Rerun AI adjudication?</DialogTitle>
+            <DialogDescription>This claim has already been adjudicated. A rerun replaces every line-item decision with a fresh AI result.</DialogDescription>
           </DialogHeader>
           {overrideCount > 0 ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
-              <strong>
+            <div className="rounded-xl bg-vermilion-50 p-3.5 text-small text-vermilion-800 ring-1 ring-inset ring-vermilion-200">
+              <strong className="font-semibold">
                 {overrideCount} adjuster override{overrideCount === 1 ? "" : "s"} will be permanently discarded,
               </strong>{" "}
               along with their reasons and notes. Re-apply them after the rerun if they still hold.
             </div>
           ) : (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <div className="rounded-xl bg-sand-50 p-3.5 text-small text-sand-800 ring-1 ring-inset ring-sand-200">
               The current decisions, amounts and AI explanations will be replaced.
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRerunConfirm({ open: false, showResults: false })}>
+            <Button variant="secondary" onClick={() => setRerunConfirm({ open: false, showResults: false })}>
               Cancel
             </Button>
             <Button
-              onClick={() =>
-                handleRunAdjudication({ confirmDiscardOverrides: true, showResults: rerunConfirm.showResults })
-              }
-              className={`text-white gap-1.5 ${
-                overrideCount > 0 ? "bg-red-600 hover:bg-red-700" : "bg-amber-500 hover:bg-amber-600"
-              }`}
+              variant={overrideCount > 0 ? "danger" : "primary"}
+              onClick={() => handleRunAdjudication({ confirmDiscardOverrides: true, showResults: rerunConfirm.showResults })}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>{overrideCount > 0 ? "Rerun & Discard Overrides" : "Rerun AI Adjudication"}</span>
+              <RotateCcw className="h-4 w-4" />
+              {overrideCount > 0 ? "Rerun & discard overrides" : "Rerun AI adjudication"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Phase 5 Lock & Finalize Modal */}
+      {/* Lock & finalize */}
       <Dialog open={finalizeModalOpen} onOpenChange={setFinalizeModalOpen}>
         <DialogContent onClose={() => setFinalizeModalOpen(false)}>
           <DialogHeader>
-            <DialogTitle>Phase 5: Lock & Finalize Claim Adjudication</DialogTitle>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-peacock-50 text-peacock-600">
+              <Lock className="h-5 w-5" />
+            </div>
+            <DialogTitle>Lock and finalize this decision?</DialogTitle>
             <DialogDescription>
-              Finalizing locks this adjudication decision, records your adjuster signature, and stamps an immutable compliance record.
+              Finalizing locks the decision, records your sign-off and stamps an immutable compliance record.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 text-xs">
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900">
-              <div className="font-bold text-sm">
-                Approved Payout: {formatCurrencyINR(adjudication?.total_approved_inr)}
+          <div className="space-y-4">
+            <dl className="grid grid-cols-3 overflow-hidden rounded-xl bg-ground text-center">
+              <div className="px-2 py-3">
+                <dt className="text-tiny font-medium text-ink-3">Payout</dt>
+                <dd className="figures mt-0.5 text-body font-semibold text-leaf-700">{formatCurrencyINR(adjudication?.total_approved_inr)}</dd>
               </div>
-              <div className="text-[11px] text-emerald-700 mt-0.5">
-                Total Deductions: {formatCurrencyINR(adjudication?.total_deducted_inr)}
+              <div className="border-l border-line px-2 py-3">
+                <dt className="text-tiny font-medium text-ink-3">Deductions</dt>
+                <dd className="figures mt-0.5 text-body font-semibold text-ink">{formatCurrencyINR(adjudication?.total_deducted_inr)}</dd>
               </div>
-            </div>
+              <div className="border-l border-line px-2 py-3">
+                <dt className="text-tiny font-medium text-ink-3">Overrides</dt>
+                <dd className="figures mt-0.5 text-body font-semibold text-ink">{overrideCount}</dd>
+              </div>
+            </dl>
 
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Final Adjuster Sign-Off Remarks</label>
+            {flaggedItems.length > 0 && (
+              <p className="rounded-xl bg-marigold-50 px-3.5 py-2.5 text-small text-marigold-800 ring-1 ring-inset ring-marigold-200">
+                {flaggedItems.length} item{flaggedItems.length === 1 ? " is" : "s are"} still flagged and will be locked as they stand
+                (not paid). Review {flaggedItems.length === 1 ? "it" : "them"} first if that isn't intended.
+              </p>
+            )}
+
+            <Field label="Sign-off remarks" htmlFor="finalize-notes" optional>
               <Textarea
+                id="finalize-notes"
                 value={finalizeNotes}
                 onChange={(e) => setFinalizeNotes(e.target.value)}
-                placeholder="Final remarks, summary of cashless authorization or deductions..."
+                placeholder="Summary of the cashless authorisation or deductions"
                 rows={3}
               />
-            </div>
+            </Field>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFinalizeModalOpen(false)}>
+            <Button variant="secondary" onClick={() => setFinalizeModalOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleFinalize}
-              disabled={finalizing}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-            >
-              {finalizing ? "Finalizing..." : "Confirm & Lock Compliance Record"}
+            <Button variant="proceed" onClick={handleFinalize} loading={finalizing}>
+              {!finalizing && <Lock className="h-4 w-4" />}
+              {finalizing ? "Locking…" : "Lock & finalize"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Compliance Audit Report Viewer */}
-      <Dialog open={auditReportModalOpen} onOpenChange={setAuditReportModalOpen}>
-        <DialogContent className="max-w-2xl" onClose={() => setAuditReportModalOpen(false)}>
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle>Compliance Audit Record & Trace</DialogTitle>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => window.print()}
-                className="h-7 text-xs gap-1"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Record</span>
-              </Button>
-            </div>
-            <DialogDescription>
-              IRDAI 3-Hour Mandate Standard Verification Trail
-            </DialogDescription>
-          </DialogHeader>
+      <AuditReportDialog open={auditReportModalOpen} onOpenChange={setAuditReportModalOpen} report={auditReport} isHospital={isHospital} />
+    </div>
+  )
+}
 
-          <div className="space-y-4 text-xs font-mono bg-slate-50 p-4 rounded-lg border border-slate-200 max-h-[60vh] overflow-y-auto">
-            <div>
-              <span className="text-slate-500">CLAIM NUMBER:</span> {auditReport?.claim_number}
-            </div>
-            <div>
-              <span className="text-slate-500">PATIENT:</span> {auditReport?.patient_name}
-            </div>
-            <div>
-              <span className="text-slate-500">HOSPITAL:</span> {auditReport?.hospital}
-            </div>
-            <div>
-              <span className="text-slate-500">AUDIT CRYPTO HASH:</span> {auditReport?.audit_hash}
-            </div>
-            <div>
-              <span className="text-slate-500">COMPLIANCE STANDARD:</span> {auditReport?.compliance_standard}
-            </div>
-            <div>
-              <span className="text-slate-500">DECISION LOCK TIMESTAMP:</span> {formatDateTime(auditReport?.adjudication_timestamp)}
-            </div>
-
-            <hr className="border-slate-200" />
-
-            <div className="font-bold text-slate-800 text-sm">LINE ITEM DECISIONS & POLICY CITATIONS:</div>
-            <div className="space-y-2 text-[11px]">
-              {auditReport?.line_item_audits?.map((li) => (
-                <div key={li.id} className="p-2 bg-white rounded border border-slate-200">
-                  <div className="flex justify-between font-bold">
-                    <span>#{li.line_number} {li.item_name}</span>
-                    <span className="text-emerald-700">Approved: {formatCurrencyINR(li.approved_amount_inr)}</span>
-                  </div>
-                  <div className="text-slate-600 mt-1">Status: {li.final_status} | Deduction: {formatCurrencyINR(li.deducted_amount_inr)}</div>
-                  {li.citation_data?.clause_reference && (
-                    <div className="text-indigo-700 mt-0.5">Citation: {li.citation_data.clause_reference} (p.{li.citation_data.clause_page})</div>
-                  )}
-                  {li.is_overridden && (
-                    <div className="text-amber-700 font-bold mt-0.5">
-                      OVERRIDE [{li.override_reason}]: {li.override_note}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+function AiAtWork({ count }) {
+  const [step, setStep] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setStep((s) => Math.min(s + 1, AI_STEPS.length - 1)), 1400)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <section className="overflow-hidden rounded-card bg-peacock-800 text-white shadow-raised" aria-live="polite">
+      <div className="h-1 w-full overflow-hidden bg-white/10">
+        <div className="h-full w-1/3 animate-indeterminate rounded-full bg-marigold-400" />
+      </div>
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
+            <Sparkles className="h-5 w-5 animate-pulse text-marigold-300" />
+          </span>
+          <div>
+            <div className="font-semibold">AI is adjudicating{count ? ` ${count} line items` : " this claim"}</div>
+            <div className="text-small text-peacock-100/80">Usually takes under a minute. You can keep working on other tabs.</div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+        <ol className="grid gap-1.5 text-small sm:min-w-[300px]">
+          {AI_STEPS.map((label, i) => (
+            <li key={label} className={cn("flex items-center gap-2 transition-colors duration-300", i < step ? "text-peacock-200" : i === step ? "text-white" : "text-white/40")}>
+              <span className={cn("h-1.5 w-1.5 rounded-full", i < step ? "bg-peacock-300" : i === step ? "bg-marigold-400" : "bg-white/25")} />
+              {label}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  )
+}
+
+function NoDecisionYet({ isInsurer, isDraft, insurer, onRun, onDocuments }) {
+  return (
+    <section className="flex flex-col items-center rounded-card bg-surface px-6 py-14 text-center shadow-card">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-peacock-50 text-peacock-600">
+        <Scale className="h-6 w-6" strokeWidth={1.75} />
+      </div>
+      <h3 className="text-lg font-semibold text-ink">{isDraft ? "No decision before submission" : "No decision yet"}</h3>
+      <p className="mt-1 max-w-md text-sm text-ink-3">
+        {isInsurer
+          ? "Run AI adjudication to get a decision for every line item, the policy clause behind it, and anything that needs your eye."
+          : isDraft
+            ? `Once you submit, ${insurer} reviews each line item. Their decision and reasoning appear here.`
+            : `${insurer} is reviewing the bill. Each line item's decision and reasoning will appear here.`}
+      </p>
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        {isInsurer ? (
+          <>
+            <Button variant="secondary" onClick={onDocuments}>
+              Check documents first
+            </Button>
+            <Button variant="proceed" onClick={onRun}>
+              <Sparkles className="h-4 w-4" />
+              Run AI adjudication
+            </Button>
+          </>
+        ) : (
+          isDraft && (
+            <Button variant="proceed" onClick={onDocuments}>
+              Go to documents
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          )
+        )}
+      </div>
+    </section>
+  )
+}
+
+function CockpitSkeleton() {
+  return (
+    <div className="mx-auto max-w-[1360px] space-y-5 px-4 py-6 sm:px-6" aria-busy="true" aria-label="Loading claim">
+      <div className="flex items-center gap-3.5">
+        <Skeleton className="h-12 w-12 rounded-xl" />
+        <div className="space-y-2">
+          <Skeleton className="h-3.5 w-40" />
+          <Skeleton className="h-7 w-64" />
+          <Skeleton className="h-3.5 w-80" />
+        </div>
+      </div>
+      <Skeleton className="h-36 rounded-card" />
+      <Skeleton className="h-28 rounded-card" />
+      <div className="grid gap-5 lg:grid-cols-12">
+        <Skeleton className="h-96 rounded-card lg:col-span-7" />
+        <Skeleton className="h-96 rounded-card lg:col-span-5" />
+      </div>
     </div>
   )
 }

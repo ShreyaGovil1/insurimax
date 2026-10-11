@@ -6,62 +6,85 @@ const ToastContext = React.createContext({
   toast: () => {},
 })
 
+const TONES = {
+  default: { icon: Info, chip: "bg-peacock-50 text-peacock-600", bar: "bg-peacock-400" },
+  info: { icon: Info, chip: "bg-peacock-50 text-peacock-600", bar: "bg-peacock-400" },
+  success: { icon: CheckCircle2, chip: "bg-leaf-50 text-leaf-600", bar: "bg-leaf-400" },
+  warning: { icon: AlertTriangle, chip: "bg-sand-50 text-sand-600", bar: "bg-sand-400" },
+  destructive: { icon: AlertCircle, chip: "bg-vermilion-50 text-vermilion-600", bar: "bg-vermilion-400" },
+}
+
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = React.useState([])
 
-  const toast = React.useCallback(({ title, description, variant = "default", duration = 4000 }) => {
-    const id = Math.random().toString(36).substring(2, 9)
-    setToasts((prev) => [...prev, { id, title, description, variant }])
-
-    if (duration > 0) {
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id))
-      }, duration)
-    }
+  const removeToast = React.useCallback((id) => {
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)))
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 180)
   }, [])
 
-  const removeToast = (id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }
+  const toast = React.useCallback(
+    ({ title, description, variant = "default", duration = 4500 }) => {
+      const id = Math.random().toString(36).substring(2, 9)
+      // Keep the stack short: the newest four
+      setToasts((prev) => [...prev.filter((t) => !t.leaving).slice(-3), { id, title, description, variant, duration }])
+      if (duration > 0) setTimeout(() => removeToast(id), duration)
+      return id
+    },
+    [removeToast]
+  )
+
+  const value = React.useMemo(() => ({ toast }), [toast])
 
   return (
-    <ToastContext.Provider value={{ toast }}>
+    <ToastContext.Provider value={value}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col space-y-2 max-w-md w-full pointer-events-none">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={cn(
-              "pointer-events-auto flex items-start p-4 rounded-xl shadow-lg border text-sm backdrop-blur-md transition-all animate-in slide-in-from-bottom-5 duration-300",
-              t.variant === "destructive" && "bg-red-50/95 border-red-200 text-red-900",
-              t.variant === "success" && "bg-emerald-50/95 border-emerald-200 text-emerald-900",
-              t.variant === "warning" && "bg-amber-50/95 border-amber-200 text-amber-900",
-              t.variant === "default" && "bg-white/95 border-slate-200 text-slate-900"
-            )}
-          >
-            <div className="mr-3 mt-0.5 shrink-0">
-              {t.variant === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
-              {t.variant === "destructive" && <AlertCircle className="w-5 h-5 text-red-600" />}
-              {t.variant === "warning" && <AlertTriangle className="w-5 h-5 text-amber-600" />}
-              {t.variant === "default" && <Info className="w-5 h-5 text-blue-600" />}
-            </div>
-            <div className="flex-1 mr-2">
-              {t.title && <div className="font-semibold text-sm">{t.title}</div>}
-              {t.description && <div className="text-xs opacity-90 mt-0.5 leading-relaxed">{t.description}</div>}
-            </div>
-            <button
-              onClick={() => removeToast(t.id)}
-              className="text-slate-400 hover:text-slate-600 shrink-0 p-1"
+      <div
+        role="status"
+        aria-live="polite"
+        className="pointer-events-none fixed inset-x-3 bottom-3 z-[60] flex flex-col items-stretch gap-2 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[380px]"
+      >
+        {toasts.map((t) => {
+          const tone = TONES[t.variant] || TONES.default
+          const Icon = tone.icon
+          return (
+            <div
+              key={t.id}
+              className={cn(
+                "pointer-events-auto relative flex items-start gap-3 overflow-hidden rounded-xl bg-surface p-3.5 pr-11 text-sm shadow-raised",
+                t.leaving ? "animate-toast-out" : "animate-toast-in"
+              )}
             >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ))}
+              <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", tone.chip)}>
+                <Icon className="h-[18px] w-[18px]" />
+              </div>
+              <div className="min-w-0 flex-1 pt-0.5">
+                {t.title && <div className="font-semibold leading-snug text-ink">{t.title}</div>}
+                {t.description && <div className="mt-0.5 text-small leading-relaxed text-ink-3">{t.description}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeToast(t.id)}
+                className="absolute right-2.5 top-2.5 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-4 transition-colors hover:bg-sunken hover:text-ink"
+                aria-label="Dismiss notification"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {t.duration > 0 && (
+                <span
+                  aria-hidden="true"
+                  className={cn("absolute bottom-0 left-0 h-[3px] w-full origin-left opacity-60 animate-drain", tone.bar)}
+                  style={{ animationDuration: `${t.duration}ms` }}
+                />
+              )}
+            </div>
+          )
+        })}
       </div>
     </ToastContext.Provider>
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   const context = React.useContext(ToastContext)
   if (!context) {

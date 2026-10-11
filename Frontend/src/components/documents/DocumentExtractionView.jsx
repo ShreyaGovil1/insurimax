@@ -1,48 +1,60 @@
-import React, { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
-  Upload,
-  FileText,
-  FileCheck,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
-  Download,
-  ExternalLink,
-  Edit2,
-  Building2,
-  User,
-  Calendar,
-  DollarSign,
-  Activity,
   ArrowRight,
-  Layers,
-  Tag,
+  Building2,
   Check,
+  CheckCircle2,
+  Circle,
   Code,
-  Table as TableIcon,
+  ExternalLink,
+  Eye,
+  FileImage,
+  FileText,
+  Loader2,
+  Pencil,
   RefreshCw,
-  Clock,
+  ScanSearch,
+  Send,
   ShieldAlert,
   ShieldCheck,
-  AlertTriangle,
-  AlertOctagon,
+  Sparkles,
+  Table as TableIcon,
   Trash2,
-  Eye,
+  UploadCloud,
+  User,
   X,
-  ScanSearch,
+  AlertTriangle,
 } from "lucide-react"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
-import { formatCurrencyINR } from "../../lib/utils"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
+import { cn, formatCurrencyINR, formatFileSize, formatRelative, humanize } from "../../lib/utils"
+import { DOC_TYPES, REQUIRED_FOR_SUBMISSION } from "../../lib/status"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
-import { Input } from "../ui/input"
+import { TabBar } from "../ui/tab-bar"
+import { Skeleton } from "../ui/skeleton"
+import { EmptyState } from "../ui/empty-state"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { useToast } from "../ui/toast"
-import { TypedExtractionPanel, effectiveDocType } from "./TypedExtractionPanel"
+import { TypedExtractionPanel, effectiveDocType, docTypeLabel } from "./TypedExtractionPanel"
 import { CitationButton, CitationViewer } from "./CitationViewer"
 import { citationKey } from "./citations"
 import { ExtractedDataEditor } from "./ExtractedDataEditor"
+
+const CATEGORY_TONES = {
+  room_rent: "bg-peacock-50 text-peacock-700",
+  room: "bg-peacock-50 text-peacock-700",
+  icu: "bg-vermilion-50 text-vermilion-700",
+  pharmacy: "bg-leaf-50 text-leaf-700",
+  medicine: "bg-leaf-50 text-leaf-700",
+  procedure: "bg-sand-50 text-sand-700",
+  surgery: "bg-sand-50 text-sand-700",
+  surgeon_fee: "bg-sand-50 text-sand-700",
+  consumables: "bg-marigold-50 text-marigold-800",
+  consultation: "bg-peacock-50 text-peacock-700",
+  lab: "bg-sunken text-ink-2",
+  diagnostics: "bg-sunken text-ink-2",
+}
 
 export function DocumentExtractionView({
   claimId,
@@ -51,18 +63,21 @@ export function DocumentExtractionView({
   onSwitchToAdjudication,
   runningPipeline = false,
   hasAdjudication = false,
+  onDocumentsChange,
+  onSubmitClaim,
 }) {
   const { toast } = useToast()
   const { user } = useAuth()
   const role = user?.role
   const isStaff = ["admin", "adjuster"].includes(role)
   const isHospital = role === "hospital_desk"
-  const [claim, setClaim] = useState(propClaim || null)
+  const [fetchedClaim, setFetchedClaim] = useState(null)
+  const claim = propClaim || fetchedClaim
   // Source citation shown in the right-hand viewer (null = viewer closed)
   const [activeCitation, setActiveCitation] = useState(null)
   // Documents are the hospital's: only it adds them (until the claim is closed) and only it
   // removes them, while the claim is still a draft. The insurer reviews them read-only.
-  const claimStatus = propClaim?.status ?? claim?.status
+  const claimStatus = claim?.status
   const canUpload = isHospital && !["finalized", "rejected"].includes(claimStatus)
   const canDelete = isHospital && claimStatus === "draft"
   // After submission the hospital can't re-run extraction the insurer relies on (mirrors the API);
@@ -79,6 +94,7 @@ export function DocumentExtractionView({
   const [previewDoc, setPreviewDoc] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [docToDelete, setDocToDelete] = useState(null)
   const extractedData = selectedDocId ? docData : mergedData
   const selectedDoc = documents.find((d) => d.id === selectedDocId) || null
   // Bills use the line-item view below; every other document type gets its own layout.
@@ -87,15 +103,20 @@ export function DocumentExtractionView({
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [extractingId, setExtractingId] = useState(null)
   const [localAdjudicating, setLocalAdjudicating] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
-  const [docType, setDocType] = useState("itemized_bill")
+  const [docType, setDocType] = useState(null)
+  const [dragActive, setDragActive] = useState(false)
   const [viewMode, setViewMode] = useState("structured") // "structured" | "json"
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("all")
+  const fileInputRef = useRef(null)
+  const dropzoneRef = useRef(null)
 
-  useEffect(() => {
-    if (propClaim) setClaim(propClaim)
-  }, [propClaim])
+  const presentTypes = new Set(documents.map((d) => d.doc_type))
+  const missingRequired = REQUIRED_FOR_SUBMISSION.filter((r) => !presentTypes.has(r.type))
+  // Default the upload type to whatever is still required
+  const effectiveDocTypeChoice = docType || missingRequired[0]?.type || "itemized_bill"
 
   const loadDocData = async (docId) => {
     setDocLoading(true)
@@ -115,6 +136,7 @@ export function DocumentExtractionView({
     if (selectedDocId === docId) return
     setSelectedDocId(docId)
     setSelectedCategoryFilter("all")
+    setActiveCitation(null)
     await loadDocData(docId)
   }
 
@@ -122,6 +144,7 @@ export function DocumentExtractionView({
     setSelectedDocId(null)
     setDocData(null)
     setEditingExtraction(false)
+    setActiveCitation(null)
   }
 
   const handlePreview = async (doc) => {
@@ -144,12 +167,14 @@ export function DocumentExtractionView({
     setPreviewUrl(null)
   }
 
-  const handleDeleteDocument = async (doc) => {
-    if (!window.confirm(`Delete "${doc.original_filename}"? This also removes its extracted data.`)) return
+  const handleDeleteDocument = async () => {
+    const doc = docToDelete
+    if (!doc) return
     try {
       await api.documents.delete(claimId, doc.id)
       toast({ title: "Document deleted", description: doc.original_filename, variant: "success" })
       if (selectedDocId === doc.id) handleClearSelection()
+      setDocToDelete(null)
       await loadDocumentsAndData()
     } catch (err) {
       toast({ title: "Delete failed", description: err.message, variant: "destructive" })
@@ -157,16 +182,16 @@ export function DocumentExtractionView({
   }
 
   const loadDocumentsAndData = async () => {
-    setLoading(true)
     try {
       const [docs, data, claimData] = await Promise.all([
         api.documents.list(claimId),
         isStaff ? api.documents.getExtractedData(claimId).catch(() => null) : Promise.resolve(null),
-        propClaim ? Promise.resolve(propClaim) : api.claims.getById(claimId).catch(() => null),
+        propClaim ? Promise.resolve(null) : api.claims.getById(claimId).catch(() => null),
       ])
       setDocuments(docs || [])
+      onDocumentsChange?.(docs || [])
       setExtractedData(data)
-      if (claimData) setClaim(claimData)
+      if (claimData) setFetchedClaim(claimData)
       if (selectedDocId) {
         if (!(docs || []).some((d) => d.id === selectedDocId)) {
           setSelectedDocId(null)
@@ -184,12 +209,18 @@ export function DocumentExtractionView({
 
   useEffect(() => {
     loadDocumentsAndData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId])
 
+  const pickFile = (file) => {
+    if (!file) return
+    setSelectedFile(file)
+  }
+
   const handleUpload = async (e) => {
-    e.preventDefault()
+    e?.preventDefault?.()
     if (!selectedFile) {
-      toast({ title: "No file selected", variant: "destructive" })
+      toast({ title: "Choose a file first", variant: "destructive" })
       return
     }
 
@@ -197,44 +228,37 @@ export function DocumentExtractionView({
     try {
       const formData = new FormData()
       formData.append("file", selectedFile)
-      formData.append("doc_type", docType)
+      formData.append("doc_type", effectiveDocTypeChoice)
 
       const doc = await api.documents.upload(claimId, formData)
-      toast({
-        title: "Document Uploaded",
-        description: "File stored. Running Gemini multimodal OCR extraction...",
-        variant: "info",
-      })
+      setUploading(false)
 
       // Automatically trigger extraction so the user doesn't get stuck with a PENDING file
       if (doc?.id) {
         setExtracting(true)
+        setExtractingId(doc.id)
+        setDocuments((prev) => [...prev.filter((d) => d.id !== doc.id), { ...doc, extraction_status: "processing" }])
         try {
           await api.documents.triggerExtraction(claimId, doc.id)
           toast({
-            title: "Extraction Complete",
-            description: "Gemini successfully parsed itemized bill line items.",
+            title: "Document read",
+            description: `${docTypeLabel(doc.doc_type)} uploaded and read by AI.`,
             variant: "success",
           })
         } catch (extErr) {
-          toast({
-            title: "Extraction Queued",
-            description: "OCR processing in progress: " + extErr.message,
-            variant: "warning",
-          })
+          toast({ title: "Reading queued", description: "OCR processing in progress: " + extErr.message, variant: "warning" })
         } finally {
           setExtracting(false)
+          setExtractingId(null)
         }
       }
 
       setSelectedFile(null)
+      setDocType(null)
+      if (fileInputRef.current) fileInputRef.current.value = ""
       await loadDocumentsAndData()
     } catch (err) {
-      toast({
-        title: "Upload Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" })
     } finally {
       setUploading(false)
     }
@@ -242,22 +266,16 @@ export function DocumentExtractionView({
 
   const handleTriggerExtraction = async (docId) => {
     setExtracting(true)
+    setExtractingId(docId)
     try {
       await api.documents.triggerExtraction(claimId, docId)
-      toast({
-        title: "Extraction Complete",
-        description: "Gemini multimodal OCR parsed line items.",
-        variant: "success",
-      })
+      toast({ title: "Document re-read", description: "Gemini multimodal OCR parsed the document again.", variant: "success" })
       await loadDocumentsAndData()
     } catch (err) {
-      toast({
-        title: "Extraction Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Reading failed", description: err.message, variant: "destructive" })
     } finally {
       setExtracting(false)
+      setExtractingId(null)
     }
   }
 
@@ -267,9 +285,9 @@ export function DocumentExtractionView({
       setDocData(corrected)
       if (isStaff) setExtractedData(await api.documents.getExtractedData(claimId).catch(() => mergedData))
       setEditingExtraction(false)
-      toast({ title: "Corrections Saved", description: "The extracted data was updated.", variant: "success" })
+      toast({ title: "Corrections saved", description: "The extracted data was updated.", variant: "success" })
     } catch (err) {
-      toast({ title: "Save Failed", description: err.message, variant: "destructive" })
+      toast({ title: "Save failed", description: err.message, variant: "destructive" })
     }
   }
 
@@ -280,24 +298,20 @@ export function DocumentExtractionView({
         await onRunAdjudication()
       } else {
         await api.adjudication.run(claimId)
-        toast({
-          title: "Adjudication Complete",
-          description: "All line items audited against policy clauses and IRDAI rules.",
-          variant: "success",
-        })
-        if (onSwitchToAdjudication) {
-          onSwitchToAdjudication()
-        }
+        toast({ title: "Adjudication complete", description: "All line items audited against policy clauses and IRDAI rules.", variant: "success" })
+        onSwitchToAdjudication?.()
       }
     } catch (err) {
-      toast({
-        title: "Adjudication Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Adjudication failed", description: err.message, variant: "destructive" })
     } finally {
       setLocalAdjudicating(false)
     }
+  }
+
+  const chooseTypeAndBrowse = (type) => {
+    setDocType(type)
+    dropzoneRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" })
+    fileInputRef.current?.click()
   }
 
   // Parse structured sections with robust fallbacks
@@ -319,253 +333,340 @@ export function DocumentExtractionView({
     lineItems.reduce((acc, it) => acc + (Number(it.total_price_inr || it.total_amount || it.total_price) || 0), 0)
   const totalBilled = Number(rawTotal) || 0
   const confidenceScore = extractedData?.confidence_score
-  const extractionNotes = extractedData?.extraction_notes || []
 
   // Identity and hospital facility verification
   const claimPatientName = claim?.patient_name?.trim() || ""
   const billPatientName = (patient?.name || "").trim()
-  const isNameMatch = Boolean(
-    claimPatientName &&
-    billPatientName &&
-    claimPatientName.toLowerCase() === billPatientName.toLowerCase()
-  )
+  const isNameMatch = Boolean(claimPatientName && billPatientName && claimPatientName.toLowerCase() === billPatientName.toLowerCase())
   const hasNameMismatch = Boolean(claimPatientName && billPatientName && !isNameMatch)
 
   const claimHospitalName = claim?.hospital_name?.trim() || ""
   const billHospitalName = (hospital?.name || "").trim()
   const isHospitalMatch = Boolean(
     claimHospitalName &&
-    billHospitalName &&
-    (claimHospitalName.toLowerCase().includes(billHospitalName.toLowerCase()) ||
-     billHospitalName.toLowerCase().includes(claimHospitalName.toLowerCase()))
+      billHospitalName &&
+      (claimHospitalName.toLowerCase().includes(billHospitalName.toLowerCase()) ||
+        billHospitalName.toLowerCase().includes(claimHospitalName.toLowerCase()))
   )
 
   // Unique categories for filtering
   const categories = ["all", ...new Set(lineItems.map((item) => item.item_category || "other").filter(Boolean))]
-
   const filteredLineItems =
     selectedCategoryFilter === "all"
       ? lineItems
       : lineItems.filter((item) => (item.item_category || "other").toLowerCase() === selectedCategoryFilter.toLowerCase())
 
-  const categoryColor = (cat) => {
-    switch ((cat || "").toLowerCase()) {
-      case "room_rent":
-      case "room":
-        return "bg-blue-50 text-blue-700 border-blue-200"
-      case "icu":
-        return "bg-rose-50 text-rose-700 border-rose-200"
-      case "pharmacy":
-      case "medicine":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200"
-      case "procedure":
-      case "surgery":
-        return "bg-purple-50 text-purple-700 border-purple-200"
-      case "consumables":
-        return "bg-amber-50 text-amber-700 border-amber-200"
-      case "consultation":
-        return "bg-cyan-50 text-cyan-700 border-cyan-200"
-      case "lab":
-      case "diagnostics":
-        return "bg-indigo-50 text-indigo-700 border-indigo-200"
-      default:
-        return "bg-slate-50 text-slate-700 border-slate-200"
-    }
-  }
-
   const isAdjudicating = runningPipeline || localAdjudicating
+  const busy = uploading || extracting
+  const requiredDone = REQUIRED_FOR_SUBMISSION.length - missingRequired.length
 
   return (
-    <div className="space-y-6">
-      {/* Upload Box */}
-      {canUpload && (
-      <Card className="border border-slate-200 shadow-xs">
-        <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50/50">
-          <CardTitle className="text-sm font-semibold flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Upload className="w-4 h-4 text-blue-600" />
-              <span>Upload Your Hospital Documents</span>
+    <div className="space-y-5">
+      {/* Required documents (hospital drafts) */}
+      {isHospital && claimStatus === "draft" && !loading && (
+        <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Required documents">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-body font-semibold text-ink">
+                {missingRequired.length === 0 ? "All required documents are attached" : "Required before you can submit"}
+              </h3>
+              <p className="text-small text-ink-3">
+                {requiredDone} of {REQUIRED_FOR_SUBMISSION.length} ready · discharge summary, prescriptions and lab reports help the review
+              </p>
             </div>
-            <span className="text-[11px] font-normal text-slate-500">
-              PDF, JPG, PNG up to 50MB
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {claimStatus === "draft" && (
-            <p className="text-[11px] text-slate-600 mb-3">
-              Required before you can submit to the insurer: a <strong>Policy Document</strong> and an{" "}
-              <strong>Itemized Hospital Bill</strong>.
-            </p>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-sunken sm:w-48">
+              <div
+                className="h-full rounded-full bg-peacock-500 transition-[width] duration-500 ease-out-strong"
+                style={{ width: `${(requiredDone / REQUIRED_FOR_SUBMISSION.length) * 100}%` }}
+              />
+            </div>
+          </div>
+          <ul className="grid border-t border-line sm:grid-cols-2">
+            {REQUIRED_FOR_SUBMISSION.map((req, i) => {
+              const doc = documents.find((d) => d.doc_type === req.type)
+              const meta = DOC_TYPES.find((t) => t.value === req.type)
+              return (
+                <li key={req.type} className={cn("flex items-center justify-between gap-3 px-5 py-3.5", i > 0 && "border-t border-line sm:border-l sm:border-t-0")}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    {doc ? (
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-leaf-600" />
+                    ) : (
+                      <Circle className="h-5 w-5 shrink-0 text-ink-4" strokeDasharray="3 3" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-ink">{meta?.label}</div>
+                      <div className="truncate text-tiny text-ink-3">{doc ? doc.original_filename : "Not attached yet"}</div>
+                    </div>
+                  </div>
+                  {!doc && canUpload && (
+                    <Button size="sm" variant="secondary" onClick={() => chooseTypeAndBrowse(req.type)}>
+                      Add
+                    </Button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+          {missingRequired.length === 0 && onSubmitClaim && (
+            <div className="flex flex-col gap-3 border-t border-leaf-100 bg-leaf-50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-small font-medium text-leaf-800">
+                Everything the insurer needs is here. Submitting starts the 3-hour SLA.
+              </p>
+              <Button variant="proceed" onClick={onSubmitClaim}>
+                <Send className="h-4 w-4" />
+                Submit to insurer
+              </Button>
+            </div>
           )}
-          <form onSubmit={handleUpload} className="flex flex-col sm:flex-row items-center gap-3">
-            <select
-              value={docType}
-              onChange={(e) => setDocType(e.target.value)}
-              className="text-xs p-2.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 w-full sm:w-56 font-medium text-slate-700 shadow-2xs"
-            >
-              <option value="itemized_bill">Itemized Hospital Bill</option>
-              <option value="discharge_summary">Discharge Summary</option>
-              <option value="prescription">Doctor Prescription</option>
-              <option value="lab_report">Diagnostic / Lab Report</option>
-              <option value="policy_document">Policy Document / Schedule</option>
-              <option value="other">Other Supporting Document</option>
-            </select>
-
-            <Input
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg"
-              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-              className="text-xs cursor-pointer file:cursor-pointer"
-            />
-
-            <Button
-              type="submit"
-              disabled={uploading || extracting || !selectedFile}
-              className="w-full sm:w-auto text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white gap-2 shadow-2xs whitespace-nowrap px-5"
-            >
-              {uploading || extracting ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>{uploading ? "Uploading..." : "Extracting OCR..."}</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Upload & Analyze</span>
-                </>
-              )}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+        </section>
       )}
 
-      {/* Uploaded Documents List */}
-      <Card className="border border-slate-200 shadow-xs">
-        <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <FileText className="w-4 h-4 text-slate-600" />
-            <CardTitle className="text-sm font-semibold">{isHospital ? "Your Uploaded Documents" : "Attached Claim Documents"}</CardTitle>
+      {/* Upload */}
+      {canUpload && (
+        <section className="rounded-card bg-surface p-5 shadow-card" aria-label="Upload a document">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-body font-semibold text-ink">Add a document</h3>
+            <span className="text-tiny text-ink-3">PDF, JPG or PNG · up to 50 MB</span>
           </div>
-          <span className="text-xs text-slate-500 font-medium">
+
+          <div className="mb-3 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Document type">
+            {DOC_TYPES.map((t) => {
+              const on = effectiveDocTypeChoice === t.value
+              const required = missingRequired.some((r) => r.type === t.value)
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setDocType(t.value)}
+                  className={cn(
+                    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-small font-semibold transition-[background-color,color,box-shadow] duration-150",
+                    on ? "bg-peacock-600 text-white" : "bg-sunken text-ink-2 hover:bg-line"
+                  )}
+                >
+                  {t.label}
+                  {required && <span className={cn("h-1.5 w-1.5 rounded-full", on ? "bg-marigold-300" : "bg-marigold-500")} aria-label="required" />}
+                </button>
+              )
+            })}
+          </div>
+
+          <form onSubmit={handleUpload}>
+            <div
+              ref={dropzoneRef}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragActive(true)
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragActive(false)
+                pickFile(e.dataTransfer.files?.[0])
+              }}
+              className={cn(
+                "relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-7 text-center transition-colors duration-150",
+                dragActive ? "border-peacock-400 bg-peacock-50" : "border-line-strong bg-ground/60",
+                busy && "pointer-events-none"
+              )}
+            >
+              {busy ? (
+                <UploadPhases phase={uploading ? "uploading" : "reading"} />
+              ) : selectedFile ? (
+                <div className="flex w-full max-w-md items-center gap-3 rounded-lg bg-surface px-3 py-2.5 text-left shadow-card">
+                  <FileText className="h-5 w-5 shrink-0 text-peacock-600" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-ink">{selectedFile.name}</div>
+                    <div className="text-tiny text-ink-3">
+                      {formatFileSize(selectedFile.size)} · as {docTypeLabel(effectiveDocTypeChoice).toLowerCase()}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFile(null)
+                      if (fileInputRef.current) fileInputRef.current.value = ""
+                    }}
+                    className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-3 hover:bg-sunken hover:text-ink"
+                    aria-label="Remove file"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-surface text-peacock-600 shadow-card">
+                    <UploadCloud className="h-5 w-5" />
+                  </span>
+                  <p className="text-sm text-ink-2">
+                    Drop the {docTypeLabel(effectiveDocTypeChoice).toLowerCase()} here, or{" "}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="cursor-pointer font-semibold text-peacock-600 underline-offset-4 hover:underline"
+                    >
+                      browse
+                    </button>
+                  </p>
+                </>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg"
+                className="sr-only"
+                aria-label="Choose a document"
+                onChange={(e) => pickFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
+            <div className="mt-3 flex justify-end">
+              <Button type="submit" disabled={busy || !selectedFile} loading={busy}>
+                {!busy && <Sparkles className="h-4 w-4" />}
+                {uploading ? "Uploading…" : extracting ? "Reading…" : "Upload & read"}
+              </Button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {/* Documents */}
+      <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Documents">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+          <h3 className="text-body font-semibold text-ink">{isHospital ? "Your documents" : "Documents from the hospital"}</h3>
+          <span className="text-small text-ink-3">
             {documents.length} {documents.length === 1 ? "file" : "files"}
           </span>
-        </CardHeader>
-        <CardContent className="p-0">
-          {documents.length === 0 ? (
-            <div className="p-8 text-center text-slate-500 text-xs">
-              {isHospital
-                ? "No documents uploaded yet for this claim. Upload a bill above to extract line items."
-                : "The hospital has not attached any documents to this claim yet."}
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {documents.map((doc) => (
-                <div
+        </div>
+        {loading ? (
+          <div className="space-y-3 p-5">
+            {[0, 1].map((i) => (
+              <div key={i} className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3.5 w-56" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : documents.length === 0 ? (
+          <EmptyState
+            icon={FileText}
+            title="No documents yet"
+            description={
+              isHospital
+                ? "Add the itemised bill and the policy document above. AI reads them and lists every charge."
+                : "The hospital hasn't attached any documents to this claim yet."
+            }
+          />
+        ) : (
+          <ul className="divide-y divide-line">
+            {documents.map((doc) => {
+              const selected = selectedDocId === doc.id
+              const reading = extractingId === doc.id || doc.extraction_status === "processing"
+              const done = doc.extraction_status === "completed"
+              const failed = doc.extraction_status === "failed"
+              const isImage = doc.mime_type?.startsWith("image/")
+              const Icon = isImage ? FileImage : FileText
+              return (
+                <li
                   key={doc.id}
-                  className={`p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors text-xs ${
-                    selectedDocId === doc.id ? "bg-blue-50/70 ring-1 ring-inset ring-blue-200" : "hover:bg-slate-50/70"
-                  }`}
+                  className={cn(
+                    "flex flex-col gap-3 px-5 py-3.5 transition-colors sm:flex-row sm:items-center sm:justify-between",
+                    selected ? "bg-peacock-50/70" : "hover:bg-ground/60"
+                  )}
                 >
-                  <div className="flex items-start space-x-3">
-                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg shrink-0 mt-0.5 border border-blue-100">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-semibold text-slate-900">{doc.original_filename}</div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
-                        <span className="capitalize">{doc.doc_type?.replace("_", " ")}</span>
-                        <span>•</span>
-                        <span>{doc.file_size_bytes ? `${Math.round(doc.file_size_bytes / 1024)} KB` : "PDF"}</span>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", selected ? "bg-peacock-600 text-white" : "bg-peacock-50 text-peacock-600")}>
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-ink">{doc.original_filename}</div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-tiny text-ink-3">
+                        <span>{docTypeLabel(doc.doc_type)}</span>
+                        {formatFileSize(doc.file_size_bytes) && <span>· {formatFileSize(doc.file_size_bytes)}</span>}
+                        {doc.created_at && <span>· {formatRelative(doc.created_at)}</span>}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2.5">
-                    <Badge
-                      variant={doc.extraction_status === "completed" ? "success" : "secondary"}
-                      className="text-[10px] capitalize font-medium"
-                    >
-                      {doc.extraction_status === "completed" ? "✅ Extracted" : doc.extraction_status || "Pending"}
-                    </Badge>
-
-                    {doc.extraction_confidence && (
-                      <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                        {Math.round(doc.extraction_confidence * 100)}% OCR
-                      </span>
+                  <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                    {reading ? (
+                      <Badge variant="peacock">
+                        <Loader2 className="animate-spin" />
+                        Reading
+                      </Badge>
+                    ) : done ? (
+                      <Badge variant="leaf">
+                        <Check />
+                        Read{doc.extraction_confidence ? ` · ${Math.round(doc.extraction_confidence * 100)}%` : ""}
+                      </Badge>
+                    ) : failed ? (
+                      <Badge variant="vermilion">Couldn't read</Badge>
+                    ) : (
+                      <Badge variant="neutral">{humanize(doc.extraction_status) || "Pending"}</Badge>
                     )}
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handlePreview(doc)}
-                      className="h-7 text-[11px] gap-1.5"
-                    >
-                      <ScanSearch className="w-3 h-3" />
-                      <span>Preview</span>
+                    <Button size="sm" variant="ghost" onClick={() => handlePreview(doc)}>
+                      <ScanSearch className="h-3.5 w-3.5" />
+                      Preview
                     </Button>
 
                     <Button
                       size="sm"
-                      variant={selectedDocId === doc.id ? "default" : "outline"}
-                      disabled={doc.extraction_status !== "completed"}
+                      variant={selected ? "primary" : "secondary"}
+                      disabled={!done}
+                      aria-pressed={selected}
                       onClick={() => handleSelectDocument(doc.id)}
-                      className="h-7 text-[11px] gap-1.5"
                     >
-                      <Eye className="w-3 h-3" />
-                      <span>View Extracted</span>
+                      <Eye className="h-3.5 w-3.5" />
+                      View extracted data
                     </Button>
 
                     {canExtract(doc) && (
                       <Button
-                        size="sm"
-                        variant="outline"
+                        size="icon-sm"
+                        variant="ghost"
                         disabled={extracting}
                         onClick={() => handleTriggerExtraction(doc.id)}
-                        className="h-7 text-[11px] gap-1.5 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
+                        title="Read this document again"
+                        aria-label={`Re-read ${doc.original_filename}`}
                       >
-                        <Sparkles className="w-3 h-3 text-purple-600" />
-                        <span>Re-Extract</span>
+                        <RefreshCw className={cn("h-3.5 w-3.5", reading && "animate-spin")} />
                       </Button>
                     )}
 
                     {canDelete && (
                       <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleDeleteDocument(doc)}
-                        className="h-7 text-[11px] gap-1.5 text-red-600 hover:bg-red-50 hover:border-red-200"
+                        size="icon-sm"
+                        variant="ghost"
+                        onClick={() => setDocToDelete(doc)}
+                        className="hover:bg-vermilion-50 hover:text-vermilion-700"
                         title="Delete document"
+                        aria-label={`Delete ${doc.original_filename}`}
                       >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Delete</span>
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
 
       {selectedDoc && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-blue-200 bg-blue-50 text-xs">
-          <span className="text-blue-900">
-            Showing extracted content of <strong>{selectedDoc.original_filename}</strong>
-            {docLoading && " (loading…)"}
+        <div className="flex animate-rise flex-col gap-2 rounded-xl bg-peacock-50 px-4 py-3 text-small text-peacock-900 sm:flex-row sm:items-center sm:justify-between">
+          <span className="flex items-center gap-2">
+            {docLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+            Showing what AI read from <strong className="font-semibold">{selectedDoc.original_filename}</strong>
           </span>
-          {isStaff && (
-            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleClearSelection}>
-              Show all documents (merged)
-            </Button>
-          )}
-          {!isStaff && (
-            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleClearSelection}>
-              Clear
-            </Button>
-          )}
+          <Button size="sm" variant="secondary" onClick={handleClearSelection}>
+            {isStaff ? "Show all documents merged" : "Close"}
+          </Button>
         </div>
       )}
 
@@ -578,438 +679,267 @@ export function DocumentExtractionView({
         />
       )}
 
-      {/* Structured Bill Data & Adjudication Trigger */}
+      {/* Structured bill data & adjudication trigger */}
       {typedSelected && docData ? null : hasExtractedData ? (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {isStaff && !selectedDocId && (
-          <div className="p-4 rounded-xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md border border-blue-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center space-x-2">
-                <span className="bg-[#A3FF12] text-slate-950 text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full tracking-wide">
-                  Bill Extracted
-                </span>
-                <span className="text-xs font-semibold text-blue-200">
-                  {lineItems.length} items parsed • {formatCurrencyINR(totalBilled)}
-                </span>
+            <section className="relative overflow-hidden rounded-card bg-peacock-800 p-5 text-white shadow-raised">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2 text-small">
+                    <span className="rounded-full bg-marigold-400 px-2.5 py-0.5 text-tiny font-semibold text-ink">Bill read</span>
+                    <span className="figures font-semibold text-peacock-100">
+                      {lineItems.length} items · {formatCurrencyINR(totalBilled)}
+                    </span>
+                  </div>
+                  <h3 className="text-body font-semibold">
+                    {hasAdjudication ? "Already adjudicated: a rerun replaces the current decisions" : "Ready for AI adjudication"}
+                  </h3>
+                  <p className="max-w-2xl text-small text-peacock-100/80">
+                    Gemini checks every line against the policy (room rent caps, co-pay, waiting periods) and flags IRDAI non-payables.
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {onSwitchToAdjudication && hasAdjudication && (
+                    <Button variant="on-dark" onClick={onSwitchToAdjudication}>
+                      Go to decision
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <Button variant={hasAdjudication ? "on-dark" : "proceed"} onClick={handleRunAdjudicationAction} loading={isAdjudicating}>
+                    {!isAdjudicating && <Sparkles className="h-4 w-4" />}
+                    {isAdjudicating ? "Auditing line items…" : hasAdjudication ? "Rerun AI adjudication" : "Run AI adjudication"}
+                  </Button>
+                </div>
               </div>
-              <h3 className="text-sm font-bold text-white">
-                {hasAdjudication
-                  ? "Already Adjudicated: Rerun Replaces the Current Decisions"
-                  : "Ready for AI Adjudication & IRDAI Compliance Audit"}
-              </h3>
-              <p className="text-xs text-blue-200/80 max-w-2xl leading-relaxed">
-                Gemini 1.5 Pro will evaluate every line item against policy clauses (room rent caps, co-pay, waiting periods) and flag IRDAI non-payable consumables.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2.5 shrink-0">
-              <Button
-                onClick={handleRunAdjudicationAction}
-                disabled={isAdjudicating}
-                className={`font-bold text-xs px-4 h-9 shadow-sm cursor-pointer gap-2 transition-all hover:scale-[1.02] ${
-                  hasAdjudication
-                    ? "bg-amber-400 hover:bg-amber-500 text-amber-950"
-                    : "bg-[#A3FF12] hover:bg-[#8ee60e] text-slate-950"
-                }`}
-              >
-                {isAdjudicating ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Auditing Line Items...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{hasAdjudication ? "Rerun AI Adjudication" : "Run AI Adjudication"}</span>
-                  </>
-                )}
-              </Button>
-
-              {onSwitchToAdjudication && (
-                <Button
-                  onClick={onSwitchToAdjudication}
-                  variant="outline"
-                  className="bg-white/10 hover:bg-white/20 border-white/20 text-white text-xs h-9 cursor-pointer gap-1.5"
-                >
-                  <span>Decision Cockpit</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Button>
-              )}
-            </div>
-          </div>
+            </section>
           )}
 
-          {/* Patient Identity & Integrity Verification Card (Insurance Approver Suite) */}
-          <div className={`p-4 rounded-2xl border-2 transition-all shadow-xs ${
-            hasNameMismatch
-              ? "bg-rose-50/90 border-rose-300 text-rose-950"
-              : isNameMatch
-              ? "bg-emerald-50/90 border-emerald-300 text-emerald-950"
-              : "bg-amber-50/90 border-amber-200 text-amber-950"
-          }`}>
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="flex items-center space-x-3">
-                {hasNameMismatch ? (
-                  <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-xs shrink-0">
-                    <ShieldAlert className="w-5 h-5" />
-                  </div>
-                ) : isNameMatch ? (
-                  <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                ) : (
-                  <div className="p-2.5 bg-amber-600 text-white rounded-xl shadow-xs shrink-0">
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
-                )}
+          {/* Patient identity check */}
+          <section
+            aria-label="Patient identity check"
+            className={cn(
+              "overflow-hidden rounded-card shadow-card ring-1 ring-inset",
+              hasNameMismatch ? "bg-vermilion-50 ring-vermilion-200" : isNameMatch ? "bg-leaf-50 ring-leaf-100" : "bg-sand-50 ring-sand-200"
+            )}
+          >
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex items-start gap-3">
+                <span
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white",
+                    hasNameMismatch ? "bg-vermilion-600" : isNameMatch ? "bg-leaf-600" : "bg-sand-500"
+                  )}
+                >
+                  {hasNameMismatch ? <ShieldAlert className="h-5 w-5" /> : isNameMatch ? <ShieldCheck className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
+                </span>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-xs font-black uppercase tracking-wider">
-                      Patient Identity &amp; Claim Validity Audit
-                    </h4>
-                    {hasNameMismatch ? (
-                      <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
-                        ❌ Strict Name Mismatch — Auto-Approval Blocked
-                      </span>
-                    ) : isNameMatch ? (
-                      <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-600 text-white">
-                        ✅ Exact Match — Identity Verified
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-600 text-white">
-                        ⚠️ Pending Name Comparison
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] mt-0.5 opacity-90">
+                  <div className={cn("text-sm font-semibold", hasNameMismatch ? "text-vermilion-800" : isNameMatch ? "text-leaf-800" : "text-sand-800")}>
                     {hasNameMismatch
-                      ? `Hospital bill is issued to "${billPatientName}", but registered claimant is "${claimPatientName}". Under insurance policy validity rules, names must be an exact match.`
+                      ? "Name mismatch: auto-approval is blocked"
                       : isNameMatch
-                      ? `Patient name "${billPatientName}" on the hospital bill exactly matches registered claimant "${claimPatientName}".`
-                      : "Verifying extracted bill patient name against policyholder record."}
+                        ? "Identity verified: the bill matches the claimant"
+                        : "Identity not verified yet"}
+                  </div>
+                  <p className="mt-0.5 text-small text-ink-2">
+                    {hasNameMismatch
+                      ? `The bill is issued to "${billPatientName}", but the registered claimant is "${claimPatientName}". Policy rules require an exact match.`
+                      : isNameMatch
+                        ? `"${billPatientName}" on the hospital bill exactly matches the registered claimant.`
+                        : "Comparing the patient name read from the bill with the policyholder record."}
                   </p>
                 </div>
               </div>
-
-              <div className="shrink-0 flex items-center gap-2">
-                <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
-                  hasNameMismatch
-                    ? "bg-white text-rose-700 border-rose-300 shadow-2xs"
-                    : isNameMatch
-                    ? "bg-white text-emerald-700 border-emerald-300 shadow-2xs"
-                    : "bg-white text-amber-700 border-amber-300"
-                }`}>
-                  {hasNameMismatch ? "FRAUD / IDENTITY ALERT" : isNameMatch ? "VALID BILL" : "UNVERIFIED"}
-                </span>
-              </div>
             </div>
+            <dl className="grid grid-cols-2 gap-px border-t border-black/5 bg-black/5 lg:grid-cols-4">
+              <IdentityFact label="Registered claimant" value={claimPatientName} sub={claim?.uhid ? `UHID ${claim.uhid}` : null} />
+              <IdentityFact
+                label="Name on the bill"
+                value={billPatientName}
+                sub={patient?.uhid ? `UHID ${patient.uhid}` : null}
+                emphasis={hasNameMismatch}
+                empty="Not found on the bill"
+              />
+              <IdentityFact
+                label="Hospital"
+                value={billHospitalName || claimHospitalName}
+                sub={isHospitalMatch ? "Matches the claim's hospital" : billHospitalName ? "Check against the claim" : null}
+              />
+              <IdentityFact
+                label="Adjuster action"
+                value={hasNameMismatch ? "Manual investigation" : isNameMatch ? "Eligible for adjudication" : "Verify before deciding"}
+                sub={hasNameMismatch ? "Auto-approval blocked" : null}
+              />
+            </dl>
+          </section>
 
-            {/* Side-by-side comparison metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 mt-3 pt-3 border-t border-current/15 text-xs">
-              <div className="bg-white/90 backdrop-blur-xs p-2.5 rounded-xl border border-current/15">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase block">1. Registered Claimant</span>
-                <span className="font-extrabold text-slate-900 text-sm block mt-0.5">
-                  {claimPatientName || "Meera Krishnan"}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  UHID: {claim?.uhid || "Policy Member"}
-                </span>
-              </div>
-
-              <div className={`p-2.5 rounded-xl border ${
-                hasNameMismatch
-                  ? "bg-rose-100/90 border-rose-300 text-rose-950 font-bold"
-                  : "bg-white/90 border-current/15 text-slate-900"
-              }`}>
-                <span className="text-[10px] font-semibold text-slate-500 uppercase block">2. Bill Extracted Patient</span>
-                <span className={`text-sm block mt-0.5 ${hasNameMismatch ? "text-rose-700 underline font-black" : "font-extrabold"}`}>
-                  {billPatientName || "Not detected"}
-                </span>
-                <span className="text-[10px] opacity-80 font-mono">
-                  {patient?.uhid ? `UHID: ${patient.uhid}` : "From uploaded document"}
-                </span>
-              </div>
-
-              <div className="bg-white/90 backdrop-blur-xs p-2.5 rounded-xl border border-current/15">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase block">3. Hospital Facility</span>
-                <span className="font-bold text-slate-900 text-xs block mt-0.5 truncate" title={billHospitalName || claimHospitalName}>
-                  {billHospitalName || claimHospitalName || "Manipal Hospital"}
-                </span>
-                <span className="text-[10px] text-emerald-700 font-semibold">
-                  {isHospitalMatch ? "✅ In-Network Provider Match" : "Provider Facility"}
-                </span>
-              </div>
-
-              <div className="bg-white/90 backdrop-blur-xs p-2.5 rounded-xl border border-current/15">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase block">4. Approver Action</span>
-                <span className={`font-bold text-xs block mt-0.5 ${hasNameMismatch ? "text-rose-700" : "text-emerald-700"}`}>
-                  {hasNameMismatch ? "Manual Investigation Required" : "Eligible for Adjudication"}
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  {hasNameMismatch ? "Auto-approval blocked" : "Rules verified"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* 3 Overview Information Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* 1. Hospital Information */}
-            <Card className="border border-slate-200 shadow-2xs">
-              <CardHeader className="p-3.5 pb-2 border-b border-slate-100 bg-slate-50/60">
-                <CardTitle className="text-xs font-bold text-slate-700 flex items-center space-x-2">
-                  <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Hospital &amp; Admission</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-3.5 space-y-2 text-xs">
+          {/* Overview */}
+          <section className="grid gap-px overflow-hidden rounded-card bg-line shadow-card md:grid-cols-3" aria-label="Bill overview">
+            <OverviewCell icon={Building2} title="Hospital & admission">
+              <div className="font-semibold text-ink">{hospital.name || <span className="font-normal text-ink-3">Not found on the bill</span>}</div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-small">
                 <div>
-                  <div className="text-[11px] text-slate-500 font-medium">Facility Name</div>
-                  <div className="font-semibold text-slate-900">{hospital.name || "Apollo Hospitals / Partner Provider"}</div>
+                  <div className="text-tiny text-ink-3">Ward</div>
+                  <div className="font-semibold capitalize text-ink-2">{hospital.ward_type || "—"}</div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100 text-[11px]">
-                  <div>
-                    <span className="text-slate-500 block">Ward Type</span>
-                    <span className="font-semibold text-slate-800 capitalize">{hospital.ward_type || "Private Delux"}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Room Charge / Day</span>
-                    <span className="font-semibold text-slate-800">
-                      {hospital.room_rent_per_day_inr ? formatCurrencyINR(hospital.room_rent_per_day_inr) : "Standard rate"}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 2. Patient & Clinical */}
-            <Card className={`border shadow-2xs ${hasNameMismatch ? "border-rose-300 bg-rose-50/30" : "border-slate-200"}`}>
-              <CardHeader className="p-3.5 pb-2 border-b border-slate-100 bg-slate-50/60">
-                <CardTitle className="text-xs font-bold text-slate-700 flex items-center space-x-2">
-                  <User className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Patient &amp; Clinical Context</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-3.5 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
-                      <span>Patient on Bill</span>
-                      {hasNameMismatch && (
-                        <span className="text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.2 rounded">
-                          MISMATCH
-                        </span>
-                      )}
-                    </div>
-                    <div className={`font-semibold ${hasNameMismatch ? "text-rose-700 font-bold" : "text-slate-900"}`}>
-                      {patient.name || "Insured Patient"}
-                    </div>
-                  </div>
-                  {patient.uhid && (
-                    <span className="text-[10px] bg-slate-100 text-slate-700 font-mono px-2 py-0.5 rounded border border-slate-200">
-                      {patient.uhid}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-100">
-                  {(patient.diagnosis || ["Acute Condition"]).map((diag, i) => (
-                    <span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 font-medium px-2 py-0.5 rounded-full border border-indigo-200">
-                      🩺 {diag}
-                    </span>
-                  ))}
-                  {(patient.procedures || []).map((proc, i) => (
-                    <span key={i} className="text-[10px] bg-purple-50 text-purple-700 font-medium px-2 py-0.5 rounded-full border border-purple-200">
-                      ⚕️ {proc}
-                    </span>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 3. Financial & OCR Confidence */}
-            <Card className="border border-slate-200 shadow-2xs">
-              <CardHeader className="p-3.5 pb-2 border-b border-slate-100 bg-slate-50/60">
-                <CardTitle className="text-xs font-bold text-slate-700 flex items-center space-x-2">
-                  <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Extracted Bill Total</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-3.5 space-y-2 text-xs">
                 <div>
-                  <div className="text-[11px] text-slate-500 font-medium">Gross Billed Amount</div>
-                  <div className="text-xl font-extrabold text-slate-900 tracking-tight">
-                    {formatCurrencyINR(totalBilled)}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
-                  <span className="text-slate-500">{lineItems.length} itemized items</span>
-                  <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                    {confidenceScore ? `${Math.round(confidenceScore * 100)}% Confidence` : "Verified High Conf"}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Structured Table & JSON Switcher */}
-          <Card className="border border-slate-200 shadow-2xs overflow-hidden">
-            <CardHeader className="p-3 px-4 border-b border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center space-x-3">
-                <div className="flex rounded-lg border border-slate-300 p-0.5 bg-white shadow-2xs">
-                  <button
-                    onClick={() => setViewMode("structured")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md flex items-center space-x-1.5 transition-all ${
-                      viewMode === "structured"
-                        ? "bg-slate-900 text-white shadow-xs"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    <TableIcon className="w-3.5 h-3.5" />
-                    <span>Itemized Bill Table ({filteredLineItems.length})</span>
-                  </button>
-                  <button
-                    onClick={() => setViewMode("json")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md flex items-center space-x-1.5 transition-all ${
-                      viewMode === "json"
-                        ? "bg-slate-900 text-white shadow-xs"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    <Code className="w-3.5 h-3.5" />
-                    <span>Raw JSON</span>
-                  </button>
+                  <div className="text-tiny text-ink-3">Room / day</div>
+                  <div className="figures font-semibold text-ink-2">{hospital.room_rent_per_day_inr ? formatCurrencyINR(hospital.room_rent_per_day_inr) : "—"}</div>
                 </div>
               </div>
+            </OverviewCell>
+            <OverviewCell icon={User} title="Patient & clinical">
+              <div className={cn("font-semibold", hasNameMismatch ? "text-vermilion-700" : "text-ink")}>
+                {patient.name || <span className="font-normal text-ink-3">Not found on the bill</span>}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {(patient.diagnosis || []).map((diag, i) => (
+                  <Badge key={`d${i}`} variant="peacock">
+                    {diag}
+                  </Badge>
+                ))}
+                {(patient.procedures || []).map((proc, i) => (
+                  <Badge key={`p${i}`} variant="sand">
+                    {proc}
+                  </Badge>
+                ))}
+                {!patient.diagnosis?.length && !patient.procedures?.length && <span className="text-small text-ink-3">No diagnosis listed</span>}
+              </div>
+            </OverviewCell>
+            <OverviewCell icon={FileText} title="Bill total">
+              <div className="figures text-[24px] font-semibold leading-tight tracking-[-0.02em] text-ink">{formatCurrencyINR(totalBilled)}</div>
+              <div className="mt-1.5 text-small text-ink-3">
+                {lineItems.length} items{confidenceScore ? ` · read with ${Math.round(confidenceScore * 100)}% confidence` : ""}
+              </div>
+            </OverviewCell>
+          </section>
 
-              {viewMode === "structured" && categories.length > 2 && (
-                <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                  <span className="text-slate-400 text-[11px] font-medium mr-1">Filter:</span>
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setSelectedCategoryFilter(cat)}
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize transition-colors ${
-                        selectedCategoryFilter === cat
-                          ? "bg-blue-600 text-white shadow-2xs"
-                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      {cat.replace("_", " ")}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {canEditExtraction && (
-                selectedDocId ? (
-                  <Button size="sm" variant="outline" onClick={() => setEditingExtraction(true)} className="h-7 text-xs gap-1">
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Edit Data</span>
+          {/* Line items */}
+          <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Itemised bill">
+            <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="text-body font-semibold text-ink">Itemised bill</h3>
+                <TabBar
+                  variant="segmented"
+                  size="sm"
+                  value={viewMode}
+                  onChange={setViewMode}
+                  ariaLabel="Bill view"
+                  tabs={[
+                    { value: "structured", label: `Table (${filteredLineItems.length})`, icon: TableIcon },
+                    { value: "json", label: "Raw JSON", icon: Code },
+                  ]}
+                />
+              </div>
+              {canEditExtraction &&
+                (selectedDocId ? (
+                  <Button size="sm" variant="secondary" onClick={() => setEditingExtraction(true)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit data
                   </Button>
                 ) : (
-                  <span className="text-[11px] text-slate-500">Select a document (View Extracted) to edit its data</span>
-                )
-              )}
-            </CardHeader>
+                  <span className="text-tiny text-ink-3">Open a document's extracted data to correct it</span>
+                ))}
+            </div>
 
-            <CardContent className="p-0">
-              {viewMode === "structured" ? (
-                <div className={activeCitation ? "grid grid-cols-1 xl:grid-cols-2 gap-0" : ""}>
+            {viewMode === "structured" && categories.length > 2 && (
+              <div className="scrollbar-none flex items-center gap-1.5 overflow-x-auto border-b border-line px-4 py-2.5 sm:px-5">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter(cat)}
+                    aria-pressed={selectedCategoryFilter === cat}
+                    className={cn(
+                      "shrink-0 cursor-pointer rounded-full px-2.5 py-1 text-tiny font-semibold transition-colors",
+                      selectedCategoryFilter === cat ? "bg-ink text-white" : "bg-sunken text-ink-2 hover:bg-line"
+                    )}
+                  >
+                    {cat === "all" ? "All categories" : humanize(cat)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {viewMode === "structured" ? (
+              <div className={activeCitation ? "grid grid-cols-1 xl:grid-cols-2" : ""}>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead className="bg-slate-100/90 text-[10px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
-                      <tr>
-                        <th className="py-2.5 px-3.5 w-12 text-center">#</th>
-                        <th className="py-2.5 px-3.5">Item Description</th>
-                        <th className="py-2.5 px-3.5 w-32">Category</th>
-                        <th className="py-2.5 px-3.5 w-16 text-center">Qty</th>
-                        <th className="py-2.5 px-3.5 w-28 text-right">Unit Price</th>
-                        <th className="py-2.5 px-3.5 w-32 text-right">Total Price</th>
-                        <th className="py-2.5 px-3.5 w-20 text-center">Source</th>
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-line text-left text-small font-semibold text-ink-3">
+                        <th className="w-12 py-2.5 pl-5 pr-2 text-right font-semibold">#</th>
+                        <th className="px-3 py-2.5 font-semibold">Item</th>
+                        <th className="px-3 py-2.5 font-semibold">Category</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">Qty</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">Unit price</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">Total</th>
+                        <th className="py-2.5 pl-3 pr-5 text-center font-semibold">Source</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-line">
                       {filteredLineItems.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
-                            No line items found for the selected category.
+                          <td colSpan={7} className="p-6 text-center text-small text-ink-3">
+                            No line items in this category.
                           </td>
                         </tr>
                       ) : (
-                        filteredLineItems.map((item, idx) => (
-                          <tr
-                            key={idx}
-                            onClick={() => item.source?.document_id && setActiveCitation(item.source)}
-                            className={`transition-colors ${item.source?.document_id ? "cursor-pointer" : ""} ${
-                              activeCitation && activeCitation === item.source ? "bg-amber-50" : "hover:bg-slate-50/80"
-                            }`}
-                          >
-                            <td className="py-2.5 px-3.5 text-center font-mono text-slate-400 text-[11px]">
-                              {item.line_number || idx + 1}
-                            </td>
-                            <td className="py-2.5 px-3.5 font-medium text-slate-900">
-                              <div className="flex items-center gap-1.5">
-                                <span>{item.item_name || item.name || "Item"}</span>
-                                {item.manually_added && (
-                                  <span className="text-[9px] font-bold uppercase px-1 rounded bg-emerald-100 text-emerald-800">Added</span>
+                        filteredLineItems.map((item, idx) => {
+                          const cat = item.item_category || item.category || "general"
+                          const active = activeCitation && activeCitation === item.source
+                          return (
+                            <tr
+                              key={idx}
+                              onClick={() => item.source?.document_id && setActiveCitation(item.source)}
+                              className={cn("transition-colors", item.source?.document_id && "cursor-pointer", active ? "bg-marigold-50" : "hover:bg-ground/70")}
+                            >
+                              <td className="py-2.5 pl-5 pr-2 text-right font-mono text-tiny text-ink-3">{item.line_number || idx + 1}</td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex flex-wrap items-center gap-1.5 font-medium text-ink">
+                                  <span>{item.item_name || item.name || "Item"}</span>
+                                  {item.manually_added && <Badge variant="leaf">Added</Badge>}
+                                  {item.manually_edited && <Badge variant="sand">Edited</Badge>}
+                                </div>
+                                {item.prescribed_by && <span className="text-tiny text-ink-3">Dr. {item.prescribed_by}</span>}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span className={cn("inline-block whitespace-nowrap rounded-md px-2 py-0.5 text-tiny font-semibold", CATEGORY_TONES[cat.toLowerCase()] || "bg-sunken text-ink-2")}>
+                                  {humanize(cat)}
+                                </span>
+                              </td>
+                              <td className="figures px-3 py-2.5 text-right text-ink-2">{item.quantity || 1}</td>
+                              <td className="figures whitespace-nowrap px-3 py-2.5 text-right text-ink-2">{formatCurrencyINR(item.unit_price_inr || item.unit_price || 0)}</td>
+                              <td className="figures whitespace-nowrap px-3 py-2.5 text-right font-semibold text-ink">
+                                {formatCurrencyINR(item.total_price_inr || item.total_amount || item.total_price || 0)}
+                              </td>
+                              <td className="py-2.5 pl-3 pr-5 text-center">
+                                {item.source?.document_id ? (
+                                  <CitationButton citation={item.source} active={activeCitation === item.source} onClick={setActiveCitation} />
+                                ) : (
+                                  <span className="text-tiny text-ink-4" title="Re-read this document to generate citations">
+                                    —
+                                  </span>
                                 )}
-                                {item.manually_edited && (
-                                  <span className="text-[9px] font-bold uppercase px-1 rounded bg-amber-100 text-amber-800">Edited</span>
-                                )}
-                              </div>
-                              {item.prescribed_by && (
-                                <span className="text-[10px] text-slate-400">Dr. {item.prescribed_by}</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3.5">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold border capitalize ${categoryColor(
-                                  item.item_category || item.category
-                                )}`}
-                              >
-                                {(item.item_category || item.category || "General").replace("_", " ")}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3.5 text-center font-medium text-slate-600">
-                              {item.quantity || 1}
-                            </td>
-                            <td className="py-2.5 px-3.5 text-right font-mono text-slate-600">
-                              {formatCurrencyINR(item.unit_price_inr || item.unit_price || 0)}
-                            </td>
-                            <td className="py-2.5 px-3.5 text-right font-mono font-bold text-slate-900">
-                              {formatCurrencyINR(item.total_price_inr || item.total_amount || item.total_price || 0)}
-                            </td>
-                            <td className="py-2.5 px-3.5 text-center">
-                              {item.source?.document_id ? (
-                                <CitationButton
-                                  citation={item.source}
-                                  active={activeCitation === item.source}
-                                  onClick={setActiveCitation}
-                                />
-                              ) : (
-                                <span className="text-[10px] text-slate-400" title="Re-extract this document to generate citations">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
+                              </td>
+                            </tr>
+                          )
+                        })
                       )}
                     </tbody>
-                    <tfoot className="bg-slate-50/90 font-bold border-t border-slate-200">
-                      <tr>
-                        <td colSpan={4} className="py-3 px-3.5 text-right uppercase text-[11px] text-slate-600">
-                          Total Extracted Bill:
+                    <tfoot>
+                      <tr className="border-t border-line bg-ground/70">
+                        <td colSpan={5} className="py-3 pl-5 pr-3 text-right text-small font-semibold text-ink-3">
+                          Total on the bill
                         </td>
-                        <td colSpan={2} className="py-3 px-3.5 text-right font-mono text-sm text-slate-950 font-extrabold">
-                          {formatCurrencyINR(totalBilled)}
-                        </td>
+                        <td className="figures whitespace-nowrap px-3 py-3 text-right text-body font-semibold text-ink">{formatCurrencyINR(totalBilled)}</td>
                         <td />
                       </tr>
                     </tfoot>
                   </table>
                 </div>
                 {activeCitation && (
-                  <div className="p-3 border-t xl:border-t-0 xl:border-l border-slate-200 bg-slate-50/50">
-                    <div className="xl:sticky xl:top-4">
+                  <div className="border-t border-line bg-ground/50 p-3 xl:border-l xl:border-t-0">
+                    <div className="xl:sticky xl:top-20">
                       <CitationViewer
                         key={citationKey(activeCitation)}
                         claimId={claimId}
@@ -1020,32 +950,33 @@ export function DocumentExtractionView({
                     </div>
                   </div>
                 )}
-                </div>
-              ) : (
-                <div className="p-4">
-                  <pre className="font-mono text-xs bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto max-h-80">
-                    {JSON.stringify(extractedData, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            ) : (
+              <div className="p-4">
+                <pre className="max-h-96 overflow-auto rounded-xl bg-peacock-950 p-4 font-mono text-tiny leading-relaxed text-peacock-100">
+                  {JSON.stringify(extractedData, null, 2)}
+                </pre>
+              </div>
+            )}
+          </section>
         </div>
       ) : (
-        /* Empty extraction state */
-        <Card className="border border-dashed border-slate-300 bg-slate-50/50">
-          <CardContent className="p-8 text-center space-y-2">
-            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 mx-auto flex items-center justify-center">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <h4 className="text-xs font-bold text-slate-800">
-              {selectedDocId ? "No extracted content for this document" : "No Structured Bill Data Extracted Yet"}
-            </h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Select an itemized hospital bill PDF or image above and click "Upload &amp; Analyze" to let Gemini multimodal AI parse the charges automatically.
-            </p>
-          </CardContent>
-        </Card>
+        !loading &&
+        documents.length > 0 && (
+          <section className="rounded-card border border-dashed border-line-strong bg-surface/60">
+            <EmptyState
+              icon={Sparkles}
+              title={selectedDocId ? "Nothing was read from this document" : isStaff ? "No bill data read yet" : "Choose a document to see what AI read"}
+              description={
+                selectedDocId
+                  ? "Try reading it again, or upload a clearer copy."
+                  : isStaff
+                    ? "Once the hospital's itemised bill has been read, every charge appears here with a link to where it sits on the bill."
+                    : "Use View extracted data on any document that has been read."
+              }
+            />
+          </section>
+        )
       )}
 
       {editingExtraction && selectedDocId && docData && (
@@ -1057,48 +988,105 @@ export function DocumentExtractionView({
         />
       )}
 
-      {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
-          <div className="absolute inset-0" onClick={closePreview} aria-hidden="true" />
-          <div className="relative z-10 w-full max-w-5xl h-[88vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-900 truncate">{previewDoc.original_filename}</p>
-                <p className="text-[11px] text-slate-500 capitalize">{previewDoc.doc_type?.replaceAll("_", " ")}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {previewUrl && !previewUrl.startsWith("data:") && (
-                  <a href={previewUrl} target="_blank" rel="noreferrer">
-                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5">
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Open in new tab</span>
-                    </Button>
-                  </a>
-                )}
-                <button
-                  onClick={closePreview}
-                  className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 cursor-pointer"
-                  aria-label="Close preview"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      {/* Preview */}
+      <Dialog open={Boolean(previewDoc)} onOpenChange={(o) => !o && closePreview()}>
+        <DialogContent onClose={closePreview} className="flex h-[88dvh] flex-col p-0 sm:max-w-5xl">
+          <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5 pr-14">
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-body">{previewDoc?.original_filename}</DialogTitle>
+              <DialogDescription className="text-small">{docTypeLabel(previewDoc?.doc_type)}</DialogDescription>
             </div>
-            <div className="flex-1 bg-slate-100 overflow-auto flex items-center justify-center">
-              {previewLoading && <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />}
-              {!previewLoading && previewUrl && previewDoc.mime_type?.startsWith("image/") && (
-                <img src={previewUrl} alt={previewDoc.original_filename} className="max-w-full max-h-full object-contain" />
-              )}
-              {!previewLoading && previewUrl && !previewDoc.mime_type?.startsWith("image/") && (
-                <iframe src={previewUrl} title={previewDoc.original_filename} className="w-full h-full border-0" />
-              )}
-              {!previewLoading && !previewUrl && (
-                <p className="text-xs text-slate-500">Preview unavailable for this document.</p>
-              )}
-            </div>
+            {previewUrl && !previewUrl.startsWith("data:") && (
+              <a href={previewUrl} target="_blank" rel="noreferrer">
+                <Button size="sm" variant="secondary">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open in new tab
+                </Button>
+              </a>
+            )}
           </div>
-        </div>
-      )}
+          <div className="flex flex-1 items-center justify-center overflow-auto bg-sunken">
+            {previewLoading && <Loader2 className="h-6 w-6 animate-spin text-ink-3" />}
+            {!previewLoading && previewUrl && (previewDoc?.mime_type?.startsWith("image/") || previewUrl.startsWith("data:image")) && (
+              <img src={previewUrl} alt={previewDoc?.original_filename} className="max-h-full max-w-full object-contain" />
+            )}
+            {!previewLoading && previewUrl && !(previewDoc?.mime_type?.startsWith("image/") || previewUrl.startsWith("data:image")) && (
+              <iframe src={previewUrl} title={previewDoc?.original_filename} className="h-full w-full border-0" />
+            )}
+            {!previewLoading && !previewUrl && <p className="text-small text-ink-3">Preview unavailable for this document.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete document */}
+      <Dialog open={Boolean(docToDelete)} onOpenChange={(o) => !o && setDocToDelete(null)}>
+        <DialogContent onClose={() => setDocToDelete(null)}>
+          <DialogHeader>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-vermilion-50 text-vermilion-600">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <DialogTitle>Delete this document?</DialogTitle>
+            <DialogDescription>
+              “{docToDelete?.original_filename}” and the data read from it are removed from the draft.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDocToDelete(null)}>
+              Keep it
+            </Button>
+            <Button variant="danger" onClick={handleDeleteDocument}>
+              <Trash2 className="h-4 w-4" />
+              Delete document
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function UploadPhases({ phase }) {
+  const steps = [
+    { key: "uploading", label: "Uploading" },
+    { key: "reading", label: "Reading with AI" },
+    { key: "done", label: "Ready" },
+  ]
+  const at = steps.findIndex((s) => s.key === phase)
+  return (
+    <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+      <Loader2 className="h-6 w-6 animate-spin text-peacock-600" />
+      <ol className="flex items-center gap-2 text-small font-semibold">
+        {steps.map((s, i) => (
+          <li key={s.key} className="flex items-center gap-2">
+            <span className={cn(i < at ? "text-peacock-600" : i === at ? "text-ink" : "text-ink-3")}>{s.label}</span>
+            {i < steps.length - 1 && <span className={cn("h-px w-6", i < at ? "bg-peacock-400" : "bg-line-strong")} />}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function IdentityFact({ label, value, sub, emphasis, empty = "—" }) {
+  return (
+    <div className="min-w-0 bg-surface/85 px-4 py-3 sm:px-5">
+      <dt className="text-tiny font-medium text-ink-3">{label}</dt>
+      <dd className={cn("mt-0.5 truncate text-sm font-semibold", emphasis ? "text-vermilion-700 underline decoration-vermilion-300 decoration-2 underline-offset-4" : "text-ink", !value && "font-normal text-ink-3")}>
+        {value || empty}
+      </dd>
+      {sub && <div className="mt-0.5 truncate font-mono text-tiny text-ink-3">{sub}</div>}
+    </div>
+  )
+}
+
+function OverviewCell({ icon: Icon, title, children }) {
+  return (
+    <div className="bg-surface p-4 sm:p-5">
+      <div className="mb-2 flex items-center gap-2 text-small font-semibold text-ink-3">
+        <Icon className="h-4 w-4 text-peacock-500" />
+        {title}
+      </div>
+      {children}
     </div>
   )
 }

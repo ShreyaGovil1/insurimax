@@ -1,6 +1,7 @@
 import React from "react"
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { AdjudicationCockpit } from "../components/adjudication/AdjudicationCockpit"
 import { ToastProvider } from "../components/ui/toast"
 import { AuthProvider } from "../context/AuthContext"
@@ -72,6 +73,8 @@ describe("AdjudicationCockpit Component", () => {
     vi.spyOn(api.claims, "getById").mockResolvedValue(mockClaim)
     vi.spyOn(api.adjudication, "get").mockResolvedValue(mockAdjudication)
     vi.spyOn(api.adjudication, "getExplanation").mockResolvedValue(mockExplanation)
+    vi.spyOn(api.documents, "list").mockResolvedValue([])
+    vi.spyOn(api.queries, "list").mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -80,20 +83,24 @@ describe("AdjudicationCockpit Component", () => {
 
   it("renders financial summary bar with billed, approved, and deductions", async () => {
     render(
-      <AuthProvider>
-        <ToastProvider>
-          <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
-        </ToastProvider>
-      </AuthProvider>
+      <MemoryRouter>
+        <AuthProvider>
+          <ToastProvider>
+            <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
+          </ToastProvider>
+        </AuthProvider>
+      </MemoryRouter>
     )
 
     // Wait for claim data to load
-    await waitFor(() => {
-      expect(screen.getByText("1. Total Billed")).toBeInTheDocument()
-      expect(screen.getByText("2. Approved Amount")).toBeInTheDocument()
-      expect(screen.getByText("3. Deductions & Exclusions")).toBeInTheDocument()
-      expect(screen.getByText("4. AI Confidence")).toBeInTheDocument()
-    })
+    const amounts = await screen.findByRole("region", { name: "Claim amounts" })
+    expect(within(amounts).getByText("Total billed")).toBeInTheDocument()
+    expect(within(amounts).getByText("Approved")).toBeInTheDocument()
+    expect(within(amounts).getByText("Deducted")).toBeInTheDocument()
+    expect(within(amounts).getByText("AI confidence")).toBeInTheDocument()
+    expect(within(amounts).getByText("₹2,85,400")).toBeInTheDocument()
+    expect(within(amounts).getByText("₹2,46,900")).toBeInTheDocument()
+    expect(within(amounts).getByText("₹38,500")).toBeInTheDocument()
 
     // Verify claim and line items render
     expect(screen.getByText(/CLM-2026-8821/i)).toBeInTheDocument()
@@ -103,16 +110,19 @@ describe("AdjudicationCockpit Component", () => {
 
   it("displays policy citation panel with clause references", async () => {
     render(
-      <AuthProvider>
-        <ToastProvider>
-          <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
-        </ToastProvider>
-      </AuthProvider>
+      <MemoryRouter>
+        <AuthProvider>
+          <ToastProvider>
+            <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
+          </ToastProvider>
+        </AuthProvider>
+      </MemoryRouter>
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Phase 2 Clause Citation & Reasoning/i)).toBeInTheDocument()
+      expect(screen.getByText(/Why this decision/i)).toBeInTheDocument()
       expect(screen.getByText(/Procedure verified with OT register/i)).toBeInTheDocument()
+      expect(screen.getByText("Clause 2.1 (Surgical Packages)")).toBeInTheDocument()
     })
   })
 })

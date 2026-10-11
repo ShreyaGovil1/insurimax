@@ -1,24 +1,22 @@
-import React, { useState, useEffect } from "react"
-import {
-  MessageSquare,
-  Sparkles,
-  Send,
-  CheckCircle2,
-  Clock,
-  Building,
-  User,
-  CheckCheck,
-} from "lucide-react"
+import { useEffect, useState } from "react"
+import { Building2, CheckCheck, MessageSquare, Reply, Send, ShieldCheck, Sparkles } from "lucide-react"
 import { api } from "../../services/api"
-import { formatDateTime } from "../../lib/utils"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
+import { cn, formatRelative } from "../../lib/utils"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Textarea } from "../ui/textarea"
+import { Skeleton } from "../ui/skeleton"
+import { EmptyState } from "../ui/empty-state"
 import { useToast } from "../ui/toast"
 import { useAuth } from "../../context/AuthContext"
 
-export function ClaimQueriesView({ claimId }) {
+const STATUS = {
+  open: { label: "Waiting for hospital", variant: "sand" },
+  responded: { label: "Answered", variant: "peacock" },
+  resolved: { label: "Resolved", variant: "leaf" },
+}
+
+export function ClaimQueriesView({ claimId, onQueriesChange }) {
   const { toast } = useToast()
   // The insurer raises and resolves queries; only the hospital answers them.
   const { user } = useAuth()
@@ -30,15 +28,17 @@ export function ClaimQueriesView({ claimId }) {
   const [aiDrafted, setAiDrafted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  // Hospital response form
-  const [activeQueryForResponse, setActiveQueryForResponse] = useState(null)
+  // Hospital response form; the first unanswered query opens ready to reply
+  const [activeQueryForResponse, setActiveQueryForResponse] = useState(undefined)
   const [responseText, setResponseText] = useState("")
+  const [responding, setResponding] = useState(false)
+  const [resolvingId, setResolvingId] = useState(null)
 
   const loadQueries = async () => {
-    setLoading(true)
     try {
       const data = await api.queries.list(claimId)
       setQueries(data || [])
+      onQueriesChange?.(data || [])
     } catch (err) {
       console.warn("Failed to load queries:", err)
     } finally {
@@ -48,7 +48,11 @@ export function ClaimQueriesView({ claimId }) {
 
   useEffect(() => {
     loadQueries()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId])
+
+  const firstUnanswered = queries.find((q) => !q.response_text && q.status !== "resolved")
+  const replyingTo = activeQueryForResponse === undefined ? (isHospital ? firstUnanswered?.id : null) : activeQueryForResponse
 
   const handleGenerateAIDraft = () => {
     setAiDrafted(true)
@@ -56,8 +60,8 @@ export function ClaimQueriesView({ claimId }) {
       "Query regarding itemized surgical breakdown: Please provide attending surgeon operation notes and clarify if laparoscopic equipment charges were bundled into surgeon fee or charged separately under consumables."
     )
     toast({
-      title: "AI Draft Generated",
-      description: "Inquiry text drafted from flagged line items and IRDAI policy clauses.",
+      title: "AI draft ready",
+      description: "Drafted from the flagged line items and the policy clauses. Edit it before sending.",
       variant: "info",
     })
   }
@@ -68,24 +72,13 @@ export function ClaimQueriesView({ claimId }) {
 
     setSubmitting(true)
     try {
-      await api.queries.create(claimId, {
-        query_text: newQueryText,
-        ai_drafted: aiDrafted,
-      })
-      toast({
-        title: "Query Dispatched to Hospital",
-        description: "Sent to hospital billing desk via portal. Awaiting response.",
-        variant: "success",
-      })
+      await api.queries.create(claimId, { query_text: newQueryText, ai_drafted: aiDrafted })
+      toast({ title: "Query sent to the hospital", description: "The hospital billing desk sees it on this claim.", variant: "success" })
       setNewQueryText("")
       setAiDrafted(false)
       loadQueries()
     } catch (err) {
-      toast({
-        title: "Dispatch Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't send the query", description: err.message, variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
@@ -93,235 +86,204 @@ export function ClaimQueriesView({ claimId }) {
 
   const handleHospitalRespond = async (queryId) => {
     if (!responseText.trim()) return
+    setResponding(true)
     try {
-      await api.queries.respond(queryId, {
-        response_text: responseText,
-      })
-      toast({
-        title: "Response Sent",
-        description: "Your reply has been sent to the insurer.",
-        variant: "success",
-      })
+      await api.queries.respond(queryId, { response_text: responseText })
+      toast({ title: "Reply sent", description: "Your reply has been sent to the insurer.", variant: "success" })
       setActiveQueryForResponse(null)
       setResponseText("")
       loadQueries()
     } catch (err) {
-      toast({
-        title: "Failed to log response",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't send the reply", description: err.message, variant: "destructive" })
+    } finally {
+      setResponding(false)
     }
   }
 
   const handleResolveQuery = async (queryId) => {
+    setResolvingId(queryId)
     try {
       await api.queries.resolve(queryId, {
         resolution_note: "Satisfactory clarification received from hospital desk. Adjudication resumed.",
       })
-      toast({
-        title: "Query Resolved",
-        description: "Adjuster satisfied with hospital explanation.",
-        variant: "success",
-      })
+      toast({ title: "Query resolved", description: "The hospital's explanation was accepted.", variant: "success" })
       loadQueries()
     } catch (err) {
-      toast({
-        title: "Resolve Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't resolve the query", description: err.message, variant: "destructive" })
+    } finally {
+      setResolvingId(null)
     }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Raise New Query (insurer only) */}
-      {isInsurer && (
-      <Card>
-        <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-sm font-semibold flex items-center space-x-2">
-              <MessageSquare className="w-4 h-4 text-blue-600" />
-              <span>Raise Clarification Query to Hospital Desk</span>
-            </CardTitle>
-            <p className="text-xs text-slate-500">
-              Inquiries regarding unbundled line items, missing discharge notes, or billing clarifications.
-            </p>
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:items-start">
+      {/* Compose (insurer) or guidance (hospital) */}
+      {isInsurer ? (
+        <section className="rounded-card bg-surface p-5 shadow-card lg:sticky lg:top-20" aria-label="Ask the hospital">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-body font-semibold text-ink">Ask the hospital</h3>
+              <p className="mt-0.5 text-small text-ink-3">Unbundled items, missing notes or billing clarifications.</p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={handleGenerateAIDraft}>
+              <Sparkles className="h-3.5 w-3.5 text-peacock-500" />
+              Draft with AI
+            </Button>
           </div>
-
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleGenerateAIDraft}
-            className="text-xs gap-1.5 border-purple-200 text-purple-700 hover:bg-purple-50"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI Draft Query</span>
-          </Button>
-        </CardHeader>
-
-        <CardContent className="p-4">
-          <form onSubmit={handleCreateQuery} className="space-y-3">
+          <form onSubmit={handleCreateQuery} className="mt-4 space-y-3">
             <Textarea
               value={newQueryText}
               onChange={(e) => setNewQueryText(e.target.value)}
-              placeholder="Type your inquiry for the hospital billing desk, or click 'AI Draft Query' to auto-generate from flagged items..."
-              rows={3}
+              placeholder="Write your question for the hospital billing desk, or let AI draft one from the flagged items"
+              rows={5}
               required
+              aria-label="Question for the hospital"
             />
-
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-slate-500">
-                {aiDrafted && (
-                  <span className="inline-flex items-center gap-1 text-purple-700 font-medium">
-                    <Sparkles className="w-3 h-3" />
-                    AI Drafted Context Activated
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-tiny text-ink-3">
+                {aiDrafted ? (
+                  <span className="inline-flex items-center gap-1 font-semibold text-peacock-700">
+                    <Sparkles className="h-3 w-3" />
+                    Drafted by AI · review before sending
                   </span>
+                ) : (
+                  "The hospital sees this on the claim"
                 )}
               </span>
-
-              <Button
-                type="submit"
-                disabled={submitting || !newQueryText.trim()}
-                className="text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{submitting ? "Sending..." : "Dispatch Query to Hospital"}</span>
+              <Button type="submit" disabled={!newQueryText.trim()} loading={submitting}>
+                {!submitting && <Send className="h-4 w-4" />}
+                {submitting ? "Sending…" : "Send to hospital"}
               </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+        </section>
+      ) : (
+        <section className="rounded-card bg-surface p-5 shadow-card" aria-label="About queries">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-peacock-50 text-peacock-600">
+              <MessageSquare className="h-5 w-5" />
+            </span>
+            <div>
+              <h3 className="text-body font-semibold text-ink">Questions from the insurer</h3>
+              <p className="mt-0.5 text-small text-ink-3">
+                When the adjuster needs a clarification it appears here. A quick, specific reply keeps the claim moving.
+              </p>
+            </div>
+          </div>
+        </section>
       )}
 
-      {/* Query History Threads */}
-      <Card>
-        <CardHeader className="pb-3 border-b border-slate-100">
-          <CardTitle className="text-sm font-semibold">
-            {isHospital ? "Queries from the Insurer" : "Active & Resolved Inquiries"} ({queries.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {queries.length === 0 ? (
-            <div className="p-8 text-center text-slate-500 text-xs">
-              {isHospital ? "The insurer has not raised any queries on this claim." : "No queries raised yet for this claim."}
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {queries.map((q) => (
-                <div key={q.id} className="p-4 space-y-3 text-xs">
-                  {/* Query Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-slate-900">
-                        {isHospital ? "Insurer Query" : "Adjuster Inquiry"}
+      {/* Threads */}
+      <section aria-label="Query threads" className="space-y-3">
+        <div className="flex items-baseline justify-between px-1">
+          <h3 className="text-body font-semibold text-ink">{isHospital ? "From the insurer" : "Conversation"}</h3>
+          <span className="text-small text-ink-3">
+            {queries.length} {queries.length === 1 ? "query" : "queries"}
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-28 rounded-card" />
+            <Skeleton className="h-20 rounded-card" />
+          </div>
+        ) : queries.length === 0 ? (
+          <div className="rounded-card bg-surface shadow-card">
+            <EmptyState
+              icon={MessageSquare}
+              title="No queries on this claim"
+              description={isHospital ? "The insurer hasn't asked anything. You'll see their questions here." : "Ask the hospital when something on the bill needs explaining."}
+            />
+          </div>
+        ) : (
+          queries.map((q) => {
+            const status = STATUS[q.status] || STATUS.open
+            const replying = replyingTo === q.id
+            return (
+              <article key={q.id} className="animate-rise overflow-hidden rounded-card bg-surface shadow-card">
+                <div className="space-y-2 p-4 sm:p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-peacock-700 text-white">
+                        <ShieldCheck className="h-4 w-4" />
                       </span>
+                      <span className="text-small font-semibold text-ink">{isHospital ? "Insurer" : "Adjuster"}</span>
+                      <span className="text-tiny text-ink-3">{formatRelative(q.created_at)}</span>
                       {q.ai_drafted && (
-                        <Badge variant="purple" className="text-[10px] py-0 px-1.5">
-                          AI Drafted
+                        <Badge variant="peacock">
+                          <Sparkles />
+                          AI drafted
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Badge
-                        variant={
-                          q.status === "resolved"
-                            ? "success"
-                            : q.status === "responded"
-                            ? "info"
-                            : "warning"
-                        }
-                        className="text-[10px] capitalize"
-                      >
-                        {q.status}
-                      </Badge>
-                      <span className="text-slate-400 text-[10px]">{formatDateTime(q.created_at)}</span>
-                    </div>
+                    <Badge variant={status.variant}>{status.label}</Badge>
                   </div>
-
-                  {/* Query Content */}
-                  <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-slate-800 leading-relaxed">
-                    {q.query_text}
-                  </div>
-
-                  {/* Hospital Response If Available */}
-                  {q.response_text ? (
-                    <div className="ml-4 p-3 bg-emerald-50/80 border border-emerald-200 rounded-lg space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900">
-                        <span className="flex items-center space-x-1">
-                          <Building className="w-3.5 h-3.5 text-emerald-700" />
-                          <span>{isHospital ? "Your Response:" : "Hospital Billing Desk Response:"}</span>
-                        </span>
-                        <span className="text-emerald-700 font-normal">{formatDateTime(q.responded_at)}</span>
-                      </div>
-                      <p className="text-slate-800 leading-relaxed text-xs">{q.response_text}</p>
-
-                      {isInsurer && q.status !== "resolved" && (
-                        <div className="pt-2 text-right">
-                          <Button
-                            size="sm"
-                            onClick={() => handleResolveQuery(q.id)}
-                            className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                          >
-                            <CheckCheck className="w-3.5 h-3.5" />
-                            <span>Mark Resolved & Proceed</span>
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ) : !isHospital ? (
-                    <div className="ml-4 text-[11px] text-slate-500 italic">Awaiting hospital response</div>
-                  ) : (
-                    /* Hospital reply form */
-                    <div className="ml-4 pt-1">
-                      {activeQueryForResponse === q.id ? (
-                        <div className="space-y-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                          <label className="text-xs font-semibold text-blue-900 block">
-                            Reply to the insurer:
-                          </label>
-                          <Textarea
-                            value={responseText}
-                            onChange={(e) => setResponseText(e.target.value)}
-                            placeholder="Your clarification for the insurer..."
-                            rows={2}
-                          />
-                          <div className="flex justify-end space-x-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setActiveQueryForResponse(null)}
-                              className="h-7 text-xs"
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => handleHospitalRespond(q.id)}
-                              className="h-7 text-xs bg-blue-600 text-white"
-                            >
-                              Send Response
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setActiveQueryForResponse(q.id)}
-                          className="h-7 text-[11px] text-blue-600 hover:bg-blue-50"
-                        >
-                          Respond to Query
-                        </Button>
-                      )}
-                    </div>
-                  )}
+                  <p className="text-sm leading-relaxed text-ink">{q.query_text}</p>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+                {q.response_text ? (
+                  <div className="border-t border-line bg-ground/70 p-4 sm:p-5">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-marigold-100 text-marigold-800">
+                        <Building2 className="h-4 w-4" />
+                      </span>
+                      <span className="text-small font-semibold text-ink">{isHospital ? "Your reply" : "Hospital billing desk"}</span>
+                      <span className="text-tiny text-ink-3">{formatRelative(q.responded_at)}</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-ink">{q.response_text}</p>
+                    {q.status === "resolved" && q.resolution_note && (
+                      <p className="mt-3 flex items-start gap-1.5 text-small text-leaf-700">
+                        <CheckCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                        {q.resolution_note}
+                      </p>
+                    )}
+                    {isInsurer && q.status !== "resolved" && (
+                      <div className="mt-3 flex justify-end">
+                        <Button size="sm" variant="success" onClick={() => handleResolveQuery(q.id)} loading={resolvingId === q.id}>
+                          {resolvingId !== q.id && <CheckCheck className="h-4 w-4" />}
+                          Mark resolved & continue
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : !isHospital ? (
+                  <div className="border-t border-line px-5 py-3 text-small text-ink-3">Waiting for the hospital's reply</div>
+                ) : replying ? (
+                  <div className="border-t border-marigold-100 bg-marigold-50 p-4 sm:p-5">
+                    <label htmlFor={`reply-${q.id}`} className="text-small font-semibold text-ink-2">
+                      Your reply to the insurer
+                    </label>
+                    <Textarea
+                      id={`reply-${q.id}`}
+                      value={responseText}
+                      onChange={(e) => setResponseText(e.target.value)}
+                      placeholder="Answer the question; mention any document you've attached"
+                      rows={3}
+                      className="mt-1.5"
+                    />
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => setActiveQueryForResponse(null)} disabled={responding}>
+                        Cancel
+                      </Button>
+                      <Button size="sm" variant="proceed" onClick={() => handleHospitalRespond(q.id)} disabled={!responseText.trim()} loading={responding}>
+                        {!responding && <Send className="h-3.5 w-3.5" />}
+                        Send reply
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={cn("flex justify-end border-t border-line px-4 py-3")}>
+                    <Button size="sm" variant="secondary" onClick={() => setActiveQueryForResponse(q.id)}>
+                      <Reply className="h-3.5 w-3.5" />
+                      Reply
+                    </Button>
+                  </div>
+                )}
+              </article>
+            )
+          })
+        )}
+      </section>
     </div>
   )
 }

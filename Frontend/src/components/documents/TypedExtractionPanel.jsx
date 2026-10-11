@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useState } from "react"
+import { createContext, useContext, useState } from "react"
 import { Code, Pencil, Table as TableIcon } from "lucide-react"
-import { formatCurrencyINR } from "../../lib/utils"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
+import { cn, formatCurrencyINR } from "../../lib/utils"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
+import { TabBar } from "../ui/tab-bar"
 import { CitationButton, CitationViewer } from "./CitationViewer"
 import { citationKey } from "./citations"
 
@@ -11,15 +11,16 @@ import { citationKey } from "./citations"
 const CitationContext = createContext({ active: null, onCite: null })
 
 const DOC_TYPE_LABELS = {
-  itemized_bill: "Itemized Hospital Bill",
-  discharge_summary: "Discharge Summary",
-  prescription: "Doctor Prescription",
-  lab_report: "Diagnostic / Lab Report",
-  consultation_notes: "Consultation Notes",
-  policy_document: "Policy Document",
-  other: "Supporting Document",
+  itemized_bill: "Itemised bill",
+  discharge_summary: "Discharge summary",
+  prescription: "Prescription",
+  lab_report: "Lab report",
+  consultation_notes: "Consultation notes",
+  policy_document: "Policy document",
+  other: "Supporting document",
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const docTypeLabel = (t) => DOC_TYPE_LABELS[t] || (t || "").replaceAll("_", " ")
 
 const isEmpty = (v) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0)
@@ -31,17 +32,21 @@ const date = (v) => {
 }
 const pct = (v) => (isEmpty(v) ? null : `${v}%`)
 
+function SectionTitle({ children }) {
+  return <h4 className="mb-3 text-small font-semibold text-ink-2">{children}</h4>
+}
+
 function Fields({ title, rows }) {
   const visible = rows.filter(([, v]) => !isEmpty(v))
   if (visible.length === 0) return null
   return (
-    <div className="p-4 border-b border-slate-100 last:border-b-0">
-      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">{title}</h4>
-      <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2.5">
+    <div className="border-b border-line px-5 py-4 last:border-b-0">
+      <SectionTitle>{title}</SectionTitle>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map(([label, value]) => (
-          <div key={label}>
-            <dt className="text-[10px] font-semibold uppercase text-slate-400">{label}</dt>
-            <dd className="text-xs font-semibold text-slate-900 break-words">{String(value)}</dd>
+          <div key={label} className="min-w-0">
+            <dt className="text-tiny font-medium text-ink-3">{label}</dt>
+            <dd className="break-words text-sm font-semibold text-ink">{String(value)}</dd>
           </div>
         ))}
       </dl>
@@ -53,11 +58,11 @@ function Chips({ title, items, variant = "secondary" }) {
   const list = (items || []).filter((i) => !isEmpty(i))
   if (list.length === 0) return null
   return (
-    <div className="p-4 border-b border-slate-100 last:border-b-0">
-      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">{title}</h4>
+    <div className="border-b border-line px-5 py-4 last:border-b-0">
+      <SectionTitle>{title}</SectionTitle>
       <div className="flex flex-wrap gap-1.5">
         {list.map((item, i) => (
-          <Badge key={i} variant={variant} className="text-[11px] font-medium">
+          <Badge key={i} variant={variant} className="whitespace-normal text-small font-medium leading-5">
             {typeof item === "string" ? item : JSON.stringify(item)}
           </Badge>
         ))}
@@ -69,9 +74,9 @@ function Chips({ title, items, variant = "secondary" }) {
 function Text({ title, value }) {
   if (isEmpty(value)) return null
   return (
-    <div className="p-4 border-b border-slate-100 last:border-b-0">
-      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">{title}</h4>
-      <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">{value}</p>
+    <div className="border-b border-line px-5 py-4 last:border-b-0">
+      <SectionTitle>{title}</SectionTitle>
+      <p className="max-w-3xl whitespace-pre-wrap text-sm leading-relaxed text-ink">{value}</p>
     </div>
   )
 }
@@ -82,29 +87,29 @@ function DataTable({ title, columns, rows }) {
   if (list.length === 0) return null
   const cited = Boolean(onCite) && list.some((r) => r?.source?.document_id)
   return (
-    <div className="p-4 border-b border-slate-100 last:border-b-0">
-      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">{title}</h4>
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-100/90 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+    <div className="border-b border-line px-5 py-4 last:border-b-0">
+      <SectionTitle>{title}</SectionTitle>
+      <div className="overflow-x-auto rounded-xl ring-1 ring-line">
+        <table className="w-full text-left text-small">
+          <thead className="bg-ground text-tiny font-semibold text-ink-3">
             <tr>
               {columns.map((c) => (
-                <th key={c.key} className="py-2 px-3">{c.label}</th>
+                <th key={c.key} className="px-3 py-2 font-semibold">{c.label}</th>
               ))}
-              {cited && <th className="py-2 px-3 text-center">Source</th>}
+              {cited && <th className="px-3 py-2 text-center font-semibold">Source</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line">
             {list.map((row, i) => (
               <tr
                 key={i}
                 className={
                   cited && active === row?.source
-                    ? "bg-amber-50"
+                    ? "bg-marigold-50"
                     : row?.manually_added
-                    ? "bg-emerald-50/60"
+                    ? "bg-leaf-50/70"
                     : row?.manually_edited
-                    ? "bg-amber-50/40"
+                    ? "bg-sand-50/70"
                     : undefined
                 }
                 title={row?.manually_added ? "Added manually" : row?.manually_edited ? "Edited manually" : undefined}
@@ -113,11 +118,11 @@ function DataTable({ title, columns, rows }) {
                   const raw = row?.[c.key]
                   const v = c.format ? c.format(raw) : raw
                   return (
-                    <td key={c.key} className="py-2 px-3 text-slate-800">{isEmpty(v) ? "—" : String(v)}</td>
+                    <td key={c.key} className={cn("px-3 py-2", isEmpty(v) ? "text-ink-4" : "text-ink")}>{isEmpty(v) ? "—" : String(v)}</td>
                   )
                 })}
                 {cited && (
-                  <td className="py-2 px-3 text-center">
+                  <td className="px-3 py-2 text-center">
                     <CitationButton citation={row?.source} active={active === row?.source} onClick={onCite} />
                   </td>
                 )}
@@ -138,6 +143,7 @@ const personRows = (p = {}) => [
 ]
 
 /** Doc type chosen at upload can be wrong; trust the shape of the extracted data when it is unambiguous. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function effectiveDocType(declared, data) {
   if (data && (data.policy || Array.isArray(data.coverage_items))) return "policy_document"
   return declared
@@ -302,7 +308,7 @@ function renderSections(docType, d) {
             columns={[
               { key: "category", label: "Category" },
               { key: "benefit", label: "Benefit / Item" },
-              { key: "covered", label: "Covered", format: (v) => (v === true ? "✔ Covered" : v === false ? "✘ Not covered" : null) },
+              { key: "covered", label: "Covered", format: (v) => (v === true ? "Covered" : v === false ? "Not covered" : null) },
               { key: "limit_inr", label: "Limit", format: money },
               { key: "limit_description", label: "Limit details" },
               { key: "conditions", label: "Conditions" },
@@ -374,33 +380,37 @@ export function TypedExtractionPanel({ docType, data, claimId, onEdit }) {
   const notes = (d.extraction_notes || []).filter(Boolean)
 
   return (
-    <Card className="border border-slate-200 shadow-xs">
-      <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-sm font-semibold">{docTypeLabel(docType)} — Extracted Data</CardTitle>
+    <section className="animate-rise overflow-hidden rounded-card bg-surface shadow-card" aria-label={`${docTypeLabel(docType)} extracted data`}>
+      <div className="flex flex-col gap-3 border-b border-line px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-body font-semibold text-ink">{docTypeLabel(docType)}</h3>
           {typeof d.confidence_score === "number" && (
-            <Badge variant="secondary" className="text-[10px]">
-              {Math.round(d.confidence_score * 100)}% confidence
-            </Badge>
+            <Badge variant="peacock">{Math.round(d.confidence_score * 100)}% confidence</Badge>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-2">
           {onEdit && (
-            <Button size="sm" variant="outline" className="h-7 text-xs gap-1 mr-1" onClick={onEdit}>
-              <Pencil className="w-3.5 h-3.5" /> Edit Data
+            <Button size="sm" variant="secondary" onClick={onEdit}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit data
             </Button>
           )}
-          <Button size="sm" variant={mode === "structured" ? "default" : "outline"} className="h-7 text-xs gap-1" onClick={() => setMode("structured")}>
-            <TableIcon className="w-3.5 h-3.5" /> Structured
-          </Button>
-          <Button size="sm" variant={mode === "json" ? "default" : "outline"} className="h-7 text-xs gap-1" onClick={() => setMode("json")}>
-            <Code className="w-3.5 h-3.5" /> JSON
-          </Button>
+          <TabBar
+            variant="segmented"
+            size="sm"
+            value={mode}
+            onChange={setMode}
+            ariaLabel="Extraction view"
+            tabs={[
+              { value: "structured", label: "Structured", icon: TableIcon },
+              { value: "json", label: "JSON", icon: Code },
+            ]}
+          />
         </div>
-      </CardHeader>
-      <CardContent className="p-0">
+      </div>
+      <div>
         {mode === "json" ? (
-          <pre className="p-4 text-[11px] leading-relaxed bg-slate-950 text-slate-100 overflow-auto max-h-[480px]">
+          <pre className="max-h-[480px] overflow-auto bg-peacock-950 p-4 font-mono text-tiny leading-relaxed text-peacock-100">
             {JSON.stringify(d, null, 2)}
           </pre>
         ) : (
@@ -411,8 +421,8 @@ export function TypedExtractionPanel({ docType, data, claimId, onEdit }) {
                 <Chips title="Extraction notes" items={notes} />
               </div>
               {activeCitation && (
-                <div className="p-3 border-t xl:border-t-0 xl:border-l border-slate-200 bg-slate-50/50">
-                  <div className="xl:sticky xl:top-4">
+                <div className="border-t border-line bg-ground/50 p-3 xl:border-l xl:border-t-0">
+                  <div className="xl:sticky xl:top-20">
                     <CitationViewer
                       key={citationKey(activeCitation)}
                       claimId={claimId}
@@ -426,7 +436,7 @@ export function TypedExtractionPanel({ docType, data, claimId, onEdit }) {
             </div>
           </CitationContext.Provider>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

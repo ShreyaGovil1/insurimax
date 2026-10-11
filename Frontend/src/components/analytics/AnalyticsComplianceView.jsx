@@ -1,50 +1,42 @@
-import React, { useState, useEffect } from "react"
-import {
-  Activity,
-  ShieldAlert,
-  AlertTriangle,
-  CheckCircle2,
-  TrendingUp,
-  Clock,
-  Building,
-  Check,
-  History,
-  Sliders,
-  Save,
-  ArrowRight,
-  Sparkles,
-  RefreshCw,
-} from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { AlertCircle, ArrowRight, Check, CheckCircle2, Clock3, History, RefreshCw, Save, ShieldAlert, SlidersHorizontal, Activity } from "lucide-react"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
-import { formatCurrencyINR, formatDateTime } from "../../lib/utils"
-import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
+import { cn, formatCurrencyINR, formatDateTime, formatRelative, humanize } from "../../lib/utils"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
+import { TabBar } from "../ui/tab-bar"
+import { Skeleton } from "../ui/skeleton"
+import { EmptyState } from "../ui/empty-state"
 import { useToast } from "../ui/toast"
+import { PageHeader } from "../common/PageHeader"
 
 export function AnalyticsComplianceView() {
   const { user } = useAuth()
   const { toast } = useToast()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("overview") // "overview" | "audit_trail" | "thresholds"
   const [slaReport, setSlaReport] = useState(null)
   const [anomalies, setAnomalies] = useState([])
   const [auditEntries, setAuditEntries] = useState([])
   const [auditTotal, setAuditTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [investigatingId, setInvestigatingId] = useState(null)
 
   // Auto-approval thresholds state
   const [thresholds, setThresholds] = useState({
     confidence: 0.92, // backend defaults until the organisation's values load
     maxAmount: 50000,
   })
+  const [savedThresholds, setSavedThresholds] = useState(null)
   const [savingThresholds, setSavingThresholds] = useState(false)
 
   const orgId = user?.org_id
 
-  const loadData = async () => {
-    setLoading(true)
+  const loadData = useCallback(async () => {
     try {
       const [report, anomData, auditData] = await Promise.all([
         api.compliance.getSlaReport(30).catch(() => null),
@@ -60,10 +52,12 @@ export function AnalyticsComplianceView() {
         try {
           const t = await api.compliance.getAutoApprovalThresholds(orgId)
           if (t) {
-            setThresholds({
+            const next = {
               confidence: t.auto_approval_confidence_threshold ?? 0.92,
               maxAmount: t.auto_approval_max_amount_inr ?? 50000,
-            })
+            }
+            setThresholds(next)
+            setSavedThresholds(next)
           }
         } catch {
           // Defaults if not admin
@@ -73,29 +67,33 @@ export function AnalyticsComplianceView() {
       console.warn("Analytics fetch error:", err)
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }
+  }, [orgId])
 
   useEffect(() => {
     loadData()
-  }, [user])
+  }, [loadData])
+
+  const refresh = () => {
+    setRefreshing(true)
+    loadData()
+  }
 
   const handleInvestigateAnomaly = async (id) => {
+    setInvestigatingId(id)
     try {
       await api.compliance.investigateAnomaly(id)
-      setAnomalies((prev) => prev.filter((a) => a.id !== id))
       toast({
-        title: "Anomaly Tagged for Medical Audit",
-        description: "Hospital assigned to pre-authorization review watchlist.",
+        title: "Sent for medical audit",
+        description: "The hospital is on the pre-authorisation review watchlist.",
         variant: "success",
       })
-    } catch (err) {
+    } catch {
+      toast({ title: "Marked as investigated", description: "Flagged for medical review.", variant: "default" })
+    } finally {
       setAnomalies((prev) => prev.filter((a) => a.id !== id))
-      toast({
-        title: "Anomaly Tagged",
-        description: "Marked for medical review.",
-        variant: "default",
-      })
+      setInvestigatingId(null)
     }
   }
 
@@ -107,373 +105,349 @@ export function AnalyticsComplianceView() {
         confidence_threshold: parseFloat(thresholds.confidence),
         max_amount_inr: parseFloat(thresholds.maxAmount),
       })
+      setSavedThresholds(thresholds)
       toast({
-        title: "Thresholds Updated",
-        description: `Auto-approval set to confidence ≥ ${(thresholds.confidence * 100).toFixed(0)}% and max payout ${formatCurrencyINR(thresholds.maxAmount)}.`,
+        title: "Auto-approval rules saved",
+        description: `Confidence ≥ ${(thresholds.confidence * 100).toFixed(0)}% and payout ≤ ${formatCurrencyINR(thresholds.maxAmount)}.`,
         variant: "success",
       })
     } catch (err) {
-      toast({
-        title: "Update Failed",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Couldn't save the rules", description: err.message, variant: "destructive" })
     } finally {
       setSavingThresholds(false)
     }
   }
 
+  const dirty =
+    savedThresholds &&
+    (Number(savedThresholds.confidence) !== Number(thresholds.confidence) || Number(savedThresholds.maxAmount) !== Number(thresholds.maxAmount))
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6">
-      {/* Top Header & Tab Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <Activity className="w-5 h-5 text-blue-600" />
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Compliance & Regulatory Intelligence</h1>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            IRDAI 3-Hour SLA analytics, immutable audit logs, and Gemini AI auto-approval threshold controls.
-          </p>
-        </div>
+    <div className="mx-auto max-w-[1360px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+      <PageHeader
+        title="Compliance & audit"
+        description="IRDAI 3-hour SLA performance, the immutable audit trail and the rules for AI auto-approval."
+        actions={
+          <Button variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            Refresh
+          </Button>
+        }
+      />
 
-        {/* View switcher tabs */}
-        <div className="flex items-center p-1 bg-slate-200/70 rounded-xl gap-1 text-xs font-semibold">
-          <button
-            onClick={() => setActiveTab("overview")}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-              activeTab === "overview"
-                ? "bg-white text-slate-900 shadow-xs"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            Overview & SLA
-          </button>
-          <button
-            onClick={() => setActiveTab("audit_trail")}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "audit_trail"
-                ? "bg-white text-slate-900 shadow-xs"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            <span>Audit Trail ({auditTotal})</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("thresholds")}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === "thresholds"
-                ? "bg-white text-slate-900 shadow-xs"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>AI Thresholds</span>
-          </button>
-        </div>
-      </div>
+      <TabBar
+        ariaLabel="Compliance sections"
+        value={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          { value: "overview", label: "SLA & anomalies", icon: Activity, attention: anomalies.length > 0 },
+          { value: "audit_trail", label: "Audit trail", icon: History, count: auditTotal || undefined },
+          { value: "thresholds", label: "Auto-approval", icon: SlidersHorizontal },
+        ]}
+      />
 
-      {/* Tab: Overview & SLA Metrics */}
-      {activeTab === "overview" && (
-        <div className="space-y-6">
-          {/* SLA Metrics Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="rounded-2xl border-l-4 border-l-emerald-600 shadow-xs">
-              <CardContent className="p-4">
-                <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  IRDAI SLA Compliance · 30d
-                </span>
-                <div className="text-3xl font-extrabold text-emerald-600 mt-1">
-                  {slaReport?.sla_compliance_rate != null ? `${slaReport.sla_compliance_rate.toFixed(1)}%` : "—"}
+      <div key={activeTab} className="animate-rise">
+        {activeTab === "overview" && (
+          <div className="space-y-6">
+            <SlaPanel report={slaReport} loading={loading} />
+
+            <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Billing anomalies">
+              <div className="flex flex-col gap-1 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-body font-semibold text-ink">Billing patterns to look at</h2>
+                  <p className="text-small text-ink-3">Hospital billing that departs from the network baseline across consecutive claims.</p>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  {slaReport
-                    ? `${slaReport.resolved_within_sla} of ${slaReport.resolved_within_sla + slaReport.sla_breached} decided claims within 3 hours`
-                    : "SLA report unavailable"}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border-l-4 border-l-blue-600 shadow-xs">
-              <CardContent className="p-4">
-                <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  Avg Turnaround Time · 30d
+                <span className="text-small text-ink-3">
+                  {anomalies.length} active
                 </span>
-                <div className="text-3xl font-extrabold text-blue-600 mt-1">
-                  {slaReport?.avg_resolution_minutes != null ? `${slaReport.avg_resolution_minutes.toFixed(1)} min` : "—"}
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  {slaReport?.finalized_claims
-                    ? `Submit to finalize, across ${slaReport.finalized_claims} finalized claim${slaReport.finalized_claims === 1 ? "" : "s"}`
-                    : "No claims finalized in the last 30 days"}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border-l-4 border-l-red-600 shadow-xs">
-              <CardContent className="p-4">
-                <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  SLA Breaches · 30d
-                </span>
-                <div className="text-3xl font-extrabold text-red-600 mt-1">
-                  {slaReport?.sla_breached ?? "—"}
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  {slaReport
-                    ? `Finalized late or open past deadline · ${slaReport.pending_within_sla} still within SLA`
-                    : "SLA report unavailable"}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border-l-4 border-l-amber-600 shadow-xs">
-              <CardContent className="p-4">
-                <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  Active Anomalies
-                </span>
-                <div className="text-3xl font-extrabold text-amber-600 mt-1">
-                  {anomalies.length}
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">Low approval rates / repeatedly overridden items</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Cross-Claim Anomaly Detection Feed */}
-          <Card className="rounded-2xl border-slate-200/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-semibold flex items-center space-x-2">
-                  <ShieldAlert className="w-4 h-4 text-amber-600" />
-                  <span>Cross-Claim Anomaly & Billing Pattern Feed</span>
-                </CardTitle>
-                <p className="text-xs text-slate-500">
-                  Identifies hospital billing anomalies across consecutive claims using pattern recognition.
-                </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadData}
-                className="h-8 text-xs gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Refresh</span>
-              </Button>
-            </CardHeader>
-            <CardContent className="p-0">
-              {anomalies.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
-                  No cross-claim anomalies detected. All hospital billing patterns are within statistical baselines.
+              {loading ? (
+                <div className="space-y-3 p-5">
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
                 </div>
+              ) : anomalies.length === 0 ? (
+                <EmptyState
+                  icon={CheckCircle2}
+                  tone="positive"
+                  title="No anomalies right now"
+                  description="Every hospital's billing pattern is within the statistical baseline."
+                />
               ) : (
-                <div className="divide-y divide-slate-100">
+                <ul className="divide-y divide-line">
                   {anomalies.map((anom) => (
-                    <div key={anom.id} className="p-4 hover:bg-slate-50 transition-colors space-y-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Badge
-                            variant={anom.severity === "high" ? "destructive" : "warning"}
-                            className="text-[10px] uppercase font-bold"
-                          >
-                            {anom.severity} Severity
+                    <li key={anom.id} className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] lg:items-start">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={anom.severity === "high" ? "vermilion" : "sand"}>
+                            {anom.severity === "high" ? <AlertCircle /> : <ShieldAlert />}
+                            {humanize(anom.severity)} severity
                           </Badge>
-                          <span className="font-bold text-slate-900">{anom.hospital_name}</span>
+                          <span className="text-sm font-semibold text-ink">{anom.hospital_name}</span>
                         </div>
-
-                        <Button
-                          size="sm"
-                          onClick={() => handleInvestigateAnomaly(anom.id)}
-                          className="h-7 text-xs bg-slate-900 hover:bg-slate-800 text-white gap-1 cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Mark Investigated</span>
-                        </Button>
+                        <div className="mt-2 text-sm font-semibold text-ink-2">{anom.category}</div>
+                        <p className="mt-0.5 text-small leading-relaxed text-ink-3">{anom.description}</p>
                       </div>
-
-                      <div className="font-semibold text-slate-800 text-xs">{anom.category}</div>
-                      <p className="text-slate-600 leading-relaxed">{anom.description}</p>
-                      <div className="p-2 bg-amber-50/70 border border-amber-200/80 rounded text-amber-900 font-medium text-[11px]">
-                        Recommended Action: {anom.suggested_action}
+                      <div className="rounded-xl bg-ground px-4 py-3">
+                        <div className="text-tiny font-semibold text-ink-3">Recommended</div>
+                        <p className="mt-0.5 text-small leading-relaxed text-ink-2">{anom.suggested_action}</p>
                       </div>
-                    </div>
+                      <Button size="sm" variant="secondary" onClick={() => handleInvestigateAnomaly(anom.id)} loading={investigatingId === anom.id} className="justify-self-start">
+                        {investigatingId !== anom.id && <Check className="h-3.5 w-3.5" />}
+                        Mark investigated
+                      </Button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </section>
+          </div>
+        )}
 
-      {/* Tab: Audit Trail */}
-      {activeTab === "audit_trail" && (
-        <Card className="rounded-2xl border-slate-200/80 shadow-xs">
-          <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-semibold flex items-center space-x-2">
-                <History className="w-4 h-4 text-blue-600" />
-                <span>Immutable Regulatory Audit Trail</span>
-              </CardTitle>
-              <p className="text-xs text-slate-500">
-                Chronological log of claim state transitions, status updates, and adjuster sign-offs per IRDAI compliance guidelines.
+        {activeTab === "audit_trail" && (
+          <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Audit trail">
+            <div className="border-b border-line px-5 py-4">
+              <h2 className="text-body font-semibold text-ink">Immutable audit trail</h2>
+              <p className="text-small text-ink-3">
+                Every claim status change and sign-off, newest first.
                 {auditTotal > auditEntries.length && ` Showing the latest ${auditEntries.length} of ${auditTotal}.`}
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={loadData}
-              className="h-8 text-xs gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Log</span>
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            {auditEntries.length === 0 ? (
-              <div className="p-8 text-center text-slate-500 text-xs">
-                No audit trail records found in this window.
+            {loading ? (
+              <div className="space-y-3 p-5">
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
               </div>
+            ) : auditEntries.length === 0 ? (
+              <EmptyState icon={History} title="No audit records in this window" description="Status changes are recorded here as claims move." />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase text-[10px]">
-                    <tr>
-                      <th className="px-4 py-3">Timestamp</th>
-                      <th className="px-4 py-3">Claim</th>
-                      <th className="px-4 py-3">Transition</th>
-                      <th className="px-4 py-3">Audit Notes</th>
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-left text-small font-semibold text-ink-3">
+                      <th className="py-2.5 pl-5 pr-3 font-semibold">When</th>
+                      <th className="px-3 py-2.5 font-semibold">Claim</th>
+                      <th className="px-3 py-2.5 font-semibold">Change</th>
+                      <th className="py-2.5 pl-3 pr-5 font-semibold">Note</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-line">
                     {auditEntries.map((e, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
-                        <td className="px-4 py-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">
-                          {formatDateTime(e.timestamp)}
+                      <tr key={idx} className="align-top transition-colors hover:bg-ground/60">
+                        <td className="whitespace-nowrap py-3 pl-5 pr-3">
+                          <div className="font-medium text-ink-2">{formatRelative(e.timestamp)}</div>
+                          <div className="figures text-tiny text-ink-3">{formatDateTime(e.timestamp)}</div>
                         </td>
-                        <td className="px-4 py-3 font-mono text-slate-700 text-[11px]" title={e.claim_id}>
-                          {e.claim_number || `${e.claim_id?.slice(0, 13)}...`}
+                        <td className="whitespace-nowrap px-3 py-3">
+                          {e.claim_id ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/claims/${e.claim_id}`)}
+                              className="cursor-pointer font-mono text-small text-peacock-700 underline-offset-4 hover:underline"
+                              title={e.claim_id}
+                            >
+                              {e.claim_number || `${e.claim_id?.slice(0, 13)}…`}
+                            </button>
+                          ) : (
+                            <span className="text-ink-4">—</span>
+                          )}
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {e.from_status && (
                               <>
-                                <Badge variant="outline" className="text-[10px]">
-                                  {e.from_status}
-                                </Badge>
-                                <ArrowRight className="w-3 h-3 text-slate-400" />
+                                <Badge variant="outline">{humanize(e.from_status)}</Badge>
+                                <ArrowRight className="h-3.5 w-3.5 text-ink-4" />
                               </>
                             )}
-                            <Badge className="text-[10px] bg-slate-900 text-white">
-                              {e.to_status}
-                            </Badge>
+                            <Badge variant="dark">{humanize(e.to_status)}</Badge>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-slate-600 max-w-md truncate">
-                          {e.note || "System event"}
-                        </td>
+                        <td className="max-w-md py-3 pl-3 pr-5 text-small text-ink-2">{e.note || "System event"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </section>
+        )}
 
-      {/* Tab: Auto-Approval Thresholds */}
-      {activeTab === "thresholds" && (
-        <Card className="rounded-2xl border-slate-200/80 shadow-xs max-w-2xl">
-          <CardHeader className="pb-3 border-b border-slate-100">
-            <CardTitle className="text-sm font-semibold flex items-center space-x-2">
-              <Sliders className="w-4 h-4 text-blue-600" />
-              <span>AI Auto-Approval Thresholds & Risk Guards</span>
-            </CardTitle>
-            <p className="text-xs text-slate-500">
-              Claims with Gemini AI confidence score at or above this threshold, and billed amount within the ceiling, can be fast-tracked without human touch.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <form onSubmit={handleSaveThresholds} className="space-y-6">
-              <div className="space-y-2">
-                <div className="flex justify-between items-center text-xs">
-                  <label className="font-bold text-slate-800">
-                    Minimum AI Confidence Score
+        {activeTab === "thresholds" && (
+          <form onSubmit={handleSaveThresholds} className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <section className="space-y-8 rounded-card bg-surface p-5 shadow-card sm:p-6" aria-label="Auto-approval rules">
+              <div>
+                <h2 className="text-body font-semibold text-ink">AI auto-approval rules</h2>
+                <p className="mt-0.5 text-small text-ink-3">
+                  A claim is fast-tracked without an adjuster only when it clears both bars below.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <label htmlFor="confidence" className="text-sm font-semibold text-ink-2">
+                    Minimum AI confidence
                   </label>
-                  <span className="font-mono font-bold text-blue-600 text-sm">
+                  <span className="figures text-[28px] font-semibold leading-none tracking-[-0.02em] text-peacock-700">
                     {(thresholds.confidence * 100).toFixed(0)}%
                   </span>
                 </div>
                 <input
+                  id="confidence"
                   type="range"
                   min="0.80"
                   max="1.0"
                   step="0.01"
                   value={thresholds.confidence}
-                  onChange={(e) =>
-                    setThresholds((prev) => ({
-                      ...prev,
-                      confidence: parseFloat(e.target.value),
-                    }))
-                  }
-                  className="w-full accent-blue-600 cursor-pointer"
+                  onChange={(e) => setThresholds((prev) => ({ ...prev, confidence: parseFloat(e.target.value) }))}
+                  className="w-full cursor-pointer"
                 />
-                <p className="text-[11px] text-slate-400">
-                  Recommended minimum: 92% to maintain sub-0.5% audit discrepancy tolerance.
-                </p>
+                <div className="flex justify-between text-tiny text-ink-3">
+                  <span>80% · more claims auto-approved</span>
+                  <span>100% · fewer</span>
+                </div>
+                <p className="text-small text-ink-3">Recommended minimum 92% to keep audit discrepancies under 0.5%.</p>
               </div>
 
               <div className="space-y-2">
-                <label className="font-bold text-slate-800 text-xs block">
-                  Maximum Auto-Approval Amount (INR)
+                <label htmlFor="max-amount" className="text-sm font-semibold text-ink-2">
+                  Maximum payout without review
                 </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-semibold text-xs">
-                    ₹
-                  </span>
+                <div className="relative max-w-xs">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-ink-3">₹</span>
                   <Input
+                    id="max-amount"
                     type="number"
                     min="5000"
                     max="500000"
                     step="5000"
                     value={thresholds.maxAmount}
-                    onChange={(e) =>
-                      setThresholds((prev) => ({
-                        ...prev,
-                        maxAmount: parseFloat(e.target.value) || 0,
-                      }))
-                    }
-                    className="pl-7 h-10 text-xs font-semibold"
+                    onChange={(e) => setThresholds((prev) => ({ ...prev, maxAmount: parseFloat(e.target.value) || 0 }))}
+                    className="figures h-11 pl-7 text-body font-semibold"
                   />
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  Claims exceeding {formatCurrencyINR(thresholds.maxAmount)} require manual adjuster sign-off regardless of confidence.
-                </p>
+                <p className="text-small text-ink-3">Claims above {formatCurrencyINR(thresholds.maxAmount)} always need an adjuster's sign-off.</p>
               </div>
 
-              <div className="pt-2 flex justify-end">
-                <Button
-                  type="submit"
-                  disabled={savingThresholds}
-                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-5 h-10 gap-2 cursor-pointer shadow-xs"
-                >
-                  {savingThresholds ? (
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5" />
-                      <span>Save Threshold Parameters</span>
-                    </>
-                  )}
+              <div className="flex items-center justify-end gap-3 border-t border-line pt-5">
+                {dirty && <span className="text-small text-marigold-700">Unsaved changes</span>}
+                <Button type="submit" loading={savingThresholds}>
+                  {!savingThresholds && <Save className="h-4 w-4" />}
+                  {savingThresholds ? "Saving…" : "Save rules"}
                 </Button>
               </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+            </section>
+
+            <aside className="h-fit rounded-card bg-peacock-800 p-5 text-white shadow-raised sm:p-6" aria-label="What the rules mean">
+              <div className="text-small font-semibold text-peacock-200">In plain words</div>
+              <p className="mt-2 text-lg font-semibold leading-snug">
+                Claims the AI scores at{" "}
+                <span className="figures rounded-md bg-marigold-400 px-1.5 text-ink">{(thresholds.confidence * 100).toFixed(0)}%</span> or higher, with a
+                payout of <span className="figures rounded-md bg-marigold-400 px-1.5 text-ink">{formatCurrencyINR(thresholds.maxAmount)}</span> or
+                less, are approved without manual review.
+              </p>
+              <ul className="mt-5 space-y-2.5 text-small text-peacock-100/85">
+                <li className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-peacock-300" />
+                  Everything else lands in the adjuster queue, most urgent SLA first.
+                </li>
+                <li className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-peacock-300" />
+                  A name mismatch on the bill always blocks auto-approval.
+                </li>
+                <li className="flex gap-2">
+                  <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-peacock-300" />
+                  Changes apply to claims adjudicated after you save.
+                </li>
+              </ul>
+            </aside>
+          </form>
+        )}
+      </div>
     </div>
+  )
+}
+
+/** SLA outcomes over 30 days as one part-to-whole bar: met · still open · breached. */
+function SlaPanel({ report, loading }) {
+  if (loading) return <Skeleton className="h-[188px] rounded-card" />
+  if (!report) {
+    return (
+      <section className="rounded-card bg-surface shadow-card">
+        <EmptyState icon={Activity} title="SLA report unavailable" description="The 30-day SLA report couldn't be loaded. Try refreshing." />
+      </section>
+    )
+  }
+
+  const met = report.resolved_within_sla || 0
+  const breached = report.sla_breached || 0
+  const open = report.pending_within_sla || 0
+  const total = met + breached + open || 1
+  const segments = [
+    { key: "met", label: "Decided within 3 h", value: met, bar: "bg-leaf-500", icon: CheckCircle2, iconTone: "text-leaf-600" },
+    { key: "open", label: "Open, still within SLA", value: open, bar: "bg-[#A9B5B1]", icon: Clock3, iconTone: "text-ink-3" },
+    { key: "breached", label: "Breached", value: breached, bar: "bg-vermilion-500", icon: AlertCircle, iconTone: "text-vermilion-600" },
+  ]
+
+  return (
+    <section className="grid overflow-hidden rounded-card bg-surface shadow-card lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]" aria-label="SLA performance, last 30 days">
+      <div className="p-5 sm:p-6">
+        <div className="text-small font-medium text-ink-3">IRDAI SLA compliance · last 30 days</div>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-3">
+          <span className="figures text-[44px] font-semibold leading-none tracking-[-0.03em] text-ink">
+            {report.sla_compliance_rate != null ? `${report.sla_compliance_rate.toFixed(1)}%` : "—"}
+          </span>
+          <span className="text-sm text-ink-3">
+            {met} of {met + breached} decided claims within 3 hours
+          </span>
+        </div>
+
+        {/* Part-to-whole bar: 2px surface gaps, rounded ends, a label for every segment */}
+        <div className="mt-6 flex h-4 w-full gap-[2px]" role="img" aria-label={segments.map((s) => `${s.label}: ${s.value}`).join(", ")}>
+          {segments
+            .filter((s) => s.value > 0)
+            .map((s) => (
+              <div
+                key={s.key}
+                className={cn("group relative h-full first:rounded-l-[4px] last:rounded-r-[4px]", s.bar)}
+                style={{ width: `${(s.value / total) * 100}%`, minWidth: 6 }}
+              >
+                <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-tiny font-semibold text-white shadow-raised group-hover:block">
+                  {s.label}: {s.value} ({Math.round((s.value / total) * 100)}%)
+                </span>
+              </div>
+            ))}
+        </div>
+        <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+          {segments.map((s) => (
+            <li key={s.key} className="inline-flex items-center gap-2 text-small text-ink-2">
+              <s.icon className={cn("h-4 w-4", s.iconTone)} aria-hidden="true" />
+              {s.label}
+              <span className="figures font-semibold text-ink">{s.value}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <dl className="grid grid-cols-2 border-t border-line lg:grid-cols-1 lg:border-l lg:border-t-0">
+        <div className="p-5 sm:p-6">
+          <dt className="text-small font-medium text-ink-3">Average turnaround</dt>
+          <dd className="figures mt-1 text-[26px] font-semibold tracking-[-0.02em] text-ink">
+            {report.avg_resolution_minutes != null ? `${report.avg_resolution_minutes.toFixed(1)} min` : "—"}
+          </dd>
+          <dd className="text-tiny text-ink-3">
+            {report.finalized_claims
+              ? `Submit to finalize, across ${report.finalized_claims} finalized claim${report.finalized_claims === 1 ? "" : "s"}`
+              : "No claims finalized in the last 30 days"}
+          </dd>
+        </div>
+        <div className="border-l border-line p-5 sm:p-6 lg:border-l-0 lg:border-t">
+          <dt className="text-small font-medium text-ink-3">SLA breaches</dt>
+          <dd className={cn("figures mt-1 text-[26px] font-semibold tracking-[-0.02em]", breached ? "text-vermilion-700" : "text-ink")}>{breached}</dd>
+          <dd className="text-tiny text-ink-3">Finalized late or open past the deadline · {open} still within SLA</dd>
+        </div>
+      </dl>
+    </section>
   )
 }
