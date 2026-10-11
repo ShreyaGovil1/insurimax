@@ -143,7 +143,27 @@ class LineItemAdjudication(BaseModel):
     confidence: float = Field(ge=0, le=1, default=0.95)
     explanation: str
     policy_rule_reference: str | None = None
+    policy_evidence_ids: list[str] = Field(
+        default_factory=list,
+        description="evidence_id values of the Policy Evidence passages this decision relies on.",
+    )
     cap_analysis: CapAnalysis | None = None
+
+
+# ── Overall decision summary ───────────────────────────────────────────────────
+class DecisionSummary(BaseModel):
+    """Plain-language explanation of the whole adjudication, for adjusters and the hospital."""
+    overview: str = Field(
+        default="",
+        description=(
+            "3-6 sentences: the overall outcome, how much was accepted vs excluded, and the main "
+            "reasons items were excluded or reduced, citing policy clauses / evidence ids."
+        ),
+    )
+    key_reasons: list[str] = Field(
+        default_factory=list,
+        description="One short bullet per distinct reason for excluding or reducing items, with the items and amount affected.",
+    )
 
 
 # ── Top-level Agent Output ────────────────────────────────────────────────────
@@ -157,5 +177,6 @@ class AdjudicationAgentOutput(BaseModel):
     flagged_infractions_or_reasons: list[FlaggedInfraction] = Field(default_factory=list)
     required_actions: RequiredActions = Field(default_factory=RequiredActions)
     line_item_decisions: list[LineItemAdjudication] = Field(default_factory=list)
+    decision_summary: DecisionSummary = Field(default_factory=DecisionSummary)
     # Internal flags (not part of user-facing schema but useful for service-layer logic)
     flags: list[str] = Field(default_factory=list)

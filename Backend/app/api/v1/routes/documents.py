@@ -7,21 +7,25 @@ GET    /claims/{claimId}/documents/{documentId}
 DELETE /claims/{claimId}/documents/{documentId}
 POST   /claims/{claimId}/documents/{documentId}/extract
 GET    /extraction-jobs/{jobId}
+GET    /claims/{claimId}/documents/{documentId}/pages
+GET    /claims/{claimId}/documents/{documentId}/pages/{page}
 GET    /claims/{claimId}/documents/{documentId}/extracted-data
 PATCH  /claims/{claimId}/documents/{documentId}/extracted-data
 GET    /claims/{claimId}/extracted-data
 PATCH  /claims/{claimId}/extracted-data
 """
+
+import asyncio
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
 
 from app.core.access import require_claim_access, require_hospital_desk
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
 from app.models.document import Document
 from app.models.user import User, UserRole
-from app.models.document import DocumentType
+from app.models.document import DocumentType, ExtractionStatus
 from app.schemas.document import (
     DocumentRead,
     DocumentSignedUrl,
@@ -29,7 +33,8 @@ from app.schemas.document import (
     ExtractionJobRead,
 )
 from app.schemas.common import MessageResponse
-from app.services import claim_service, document_service
+from app.gcp import storage as gcs
+from app.services import citation_service, claim_service, document_service
 
 router = APIRouter(tags=["Documents & Extraction"])
 
@@ -171,6 +176,47 @@ async def delete_document(
     return {"message": f"Document {doc_id} deleted"}
 
 
+# ── Page previews (citation viewer) ────────────────────────────────────────────
+
+@router.get("/claims/{claim_id}/documents/{doc_id}/pages")
+async def get_document_pages(
+    claim_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Page count and kind, so the citation viewer knows whether it can page/highlight."""
+    doc = await _authorized_document(db, claim_id, doc_id, current_user)
+    if not citation_service.is_pdf(doc.mime_type, doc.original_filename):
+        return {"document_id": str(doc.id), "kind": "image", "page_count": 1}
+    data = await gcs.download_as_bytes(doc.gcs_object_key)
+    count = await asyncio.to_thread(citation_service.pdf_page_count, data)
+    return {"document_id": str(doc.id), "kind": "pdf", "page_count": count}
+
+
+@router.get("/claims/{claim_id}/documents/{doc_id}/pages/{page}")
+async def get_document_page_image(
+    claim_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    page: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """
+    One page as an image: PDFs are rendered to PNG (citation highlights are drawn on top in the
+    browser using normalised rects); image documents are returned as-is.
+    """
+    doc = await _authorized_document(db, claim_id, doc_id, current_user)
+    data = await gcs.download_as_bytes(doc.gcs_object_key)
+    if not citation_service.is_pdf(doc.mime_type, doc.original_filename):
+        return Response(content=data, media_type=doc.mime_type or "application/octet-stream")
+    try:
+        png = await asyncio.to_thread(citation_service.render_pdf_page, data, page)
+    except IndexError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
 # ── Extraction ─────────────────────────────────────────────────────────────────
 
 @router.post(
@@ -188,8 +234,19 @@ async def trigger_extraction(
     Trigger Gemini extraction for a single document.
     Runs synchronously in this request (for hackathon simplicity).
     In production, push to Cloud Tasks / Pub/Sub.
+
+    Once the claim is submitted, the hospital can no longer re-extract a document that has
+    already been extracted: the insurer is adjudicating on that data. A document the hospital
+    uploads after submission (e.g. answering a query) still gets its first extraction.
     """
-    await _authorized_document(db, claim_id, doc_id, current_user)
+    doc = await _authorized_document(db, claim_id, doc_id, current_user)
+    if current_user.role == UserRole.HOSPITAL_DESK and doc.extraction_status == ExtractionStatus.COMPLETED:
+        claim = await claim_service.get_claim(db, claim_id)
+        if claim.status != ClaimStatus.DRAFT:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="Documents can't be re-extracted after the claim is submitted to the insurer",
+            )
     try:
         job = await document_service.trigger_extraction(db, doc_id)
     except ValueError as exc:
@@ -299,10 +356,21 @@ async def patch_document_extracted_data(
     doc_id: uuid.UUID,
     body: ExtractedDataPatch,
     db: DBSession,
-    current_user: AdjusterOrAbove,
+    current_user: CurrentUser,
 ):
-    """Apply manual corrections to one document's extraction."""
+    """
+    Apply manual corrections to one document's extraction (fields edited, items added/removed).
+    Insurer staff can correct any time; the hospital only its own documents while the claim is a
+    draft. Once submitted, the extraction is the insurer's evidence (same rule as re-extraction).
+    """
     await _authorized_document(db, claim_id, doc_id, current_user)
+    if not _is_staff(current_user):
+        claim = await claim_service.get_claim(db, claim_id)
+        if current_user.role != UserRole.HOSPITAL_DESK or claim.status != ClaimStatus.DRAFT:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Extracted data can only be corrected by the hospital while the claim is a draft",
+            )
     job = await document_service.get_document_extraction(db, doc_id)
     if not job:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No completed extraction for this document")

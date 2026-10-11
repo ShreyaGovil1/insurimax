@@ -53,6 +53,7 @@ dependencies = [
     "opentelemetry-exporter-gcp-trace>=1.6.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
     "playwright>=1.63.0",
+    "pymupdf>=1.24",
 ]
 
 [build-system]

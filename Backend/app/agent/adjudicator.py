@@ -87,6 +87,7 @@ def _build_user_message(
     non_payable_items: list[dict],
     claim_patient_name: str | None = None,
     claim_hospital_name: str | None = None,
+    policy_evidence: list[dict] | None = None,
 ) -> str:
     claim_context = {}
     if claim_patient_name:
@@ -101,6 +102,11 @@ def _build_user_message(
         f"## Extracted Bill Data\n{json.dumps(extracted_data, indent=2)}",
         f"## Policy Rules\n{json.dumps(policy_rules, indent=2)}",
         f"## IRDAI Non-Payable Items\n{json.dumps(non_payable_items, indent=2)}",
+        (
+            "## Policy Evidence (passages retrieved from the uploaded policy document; "
+            "cite them by evidence_id in policy_evidence_ids)\n"
+            + json.dumps(policy_evidence or [], indent=2)
+        ),
         (
             "Perform the full 5-step adjudication audit now.\n"
             "CRITICAL: Validate that the patient name on the bill exactly matches "
@@ -378,6 +384,7 @@ async def run_adjudication_agent(
     non_payable_items: list[dict],
     claim_patient_name: str | None = None,
     claim_hospital_name: str | None = None,
+    policy_evidence: list[dict] | None = None,
 ) -> tuple[dict, int, int]:
     """
     Runs the ADK adjudication agent end-to-end for one claim.
@@ -429,6 +436,7 @@ async def run_adjudication_agent(
                 non_payable_items,
                 claim_patient_name=claim_patient_name,
                 claim_hospital_name=claim_hospital_name,
+                policy_evidence=policy_evidence,
             )
             new_message = types.Content(role="user", parts=[types.Part(text=user_text)])
 

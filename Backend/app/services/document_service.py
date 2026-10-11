@@ -1,6 +1,8 @@
 """
 Document service — GCS upload orchestration and extraction job management.
 """
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -16,6 +18,9 @@ from app.gcp.gemini import (
 from app.models.user import User
 from app.models.document import Document, DocumentType, ExtractionJob, ExtractionStatus
 from app.core.config import settings
+from app.services.citation_service import attach_citations
+
+logger = logging.getLogger(__name__)
 
 
 async def upload_document(
@@ -126,6 +131,20 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
             inline_data=inline_data,
             model_name=settings.GEMINI_MODEL,
         )
+
+        # Turn Gemini's {"source": {page, text}} on every list item into a locatable citation
+        if isinstance(extracted, dict):
+            try:
+                await asyncio.to_thread(
+                    attach_citations,
+                    extracted,
+                    document_id=str(doc.id),
+                    filename=doc.original_filename,
+                    mime_type=doc.mime_type,
+                    file_bytes=file_bytes,
+                )
+            except Exception as exc:  # citations are best-effort; never fail the extraction
+                logger.warning("Citation linking failed for document %s: %s", doc.id, exc)
 
         # Persist results
         job.status = ExtractionStatus.COMPLETED

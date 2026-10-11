@@ -9,7 +9,6 @@ import {
   Download,
   ExternalLink,
   Edit2,
-  Save,
   Building2,
   User,
   Calendar,
@@ -41,6 +40,9 @@ import { Badge } from "../ui/badge"
 import { Input } from "../ui/input"
 import { useToast } from "../ui/toast"
 import { TypedExtractionPanel, effectiveDocType } from "./TypedExtractionPanel"
+import { CitationButton, CitationViewer } from "./CitationViewer"
+import { citationKey } from "./citations"
+import { ExtractedDataEditor } from "./ExtractedDataEditor"
 
 export function DocumentExtractionView({
   claimId,
@@ -56,11 +58,19 @@ export function DocumentExtractionView({
   const isStaff = ["admin", "adjuster"].includes(role)
   const isHospital = role === "hospital_desk"
   const [claim, setClaim] = useState(propClaim || null)
+  // Source citation shown in the right-hand viewer (null = viewer closed)
+  const [activeCitation, setActiveCitation] = useState(null)
   // Documents are the hospital's: only it adds them (until the claim is closed) and only it
   // removes them, while the claim is still a draft. The insurer reviews them read-only.
   const claimStatus = propClaim?.status ?? claim?.status
   const canUpload = isHospital && !["finalized", "rejected"].includes(claimStatus)
   const canDelete = isHospital && claimStatus === "draft"
+  // After submission the hospital can't re-run extraction the insurer relies on (mirrors the API);
+  // a document whose first extraction never completed can still be extracted.
+  const canExtract = (doc) => !isHospital || claimStatus === "draft" || doc.extraction_status !== "completed"
+  // Corrections are per document (keeps citations on their rows): insurer any time, hospital on drafts
+  const canEditExtraction = isStaff || (isHospital && claimStatus === "draft")
+  const [editingExtraction, setEditingExtraction] = useState(false)
   const [documents, setDocuments] = useState([])
   const [mergedData, setExtractedData] = useState(null)
   const [selectedDocId, setSelectedDocId] = useState(null)
@@ -81,8 +91,6 @@ export function DocumentExtractionView({
   const [selectedFile, setSelectedFile] = useState(null)
   const [docType, setDocType] = useState("itemized_bill")
   const [viewMode, setViewMode] = useState("structured") // "structured" | "json"
-  const [isEditingPayload, setIsEditingPayload] = useState(false)
-  const [editedPayloadJson, setEditedPayloadJson] = useState("")
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState("all")
 
   useEffect(() => {
@@ -94,8 +102,7 @@ export function DocumentExtractionView({
     try {
       const res = await api.documents.getDocumentExtraction(claimId, docId)
       setDocData(res?.extracted_data || null)
-      setEditedPayloadJson(JSON.stringify(res?.extracted_data || {}, null, 2))
-      setIsEditingPayload(false)
+      setEditingExtraction(false)
     } catch (err) {
       setDocData(null)
       toast({ title: "Could not load extraction", description: err.message, variant: "destructive" })
@@ -114,8 +121,7 @@ export function DocumentExtractionView({
   const handleClearSelection = () => {
     setSelectedDocId(null)
     setDocData(null)
-    setIsEditingPayload(false)
-    setEditedPayloadJson(JSON.stringify(mergedData, null, 2))
+    setEditingExtraction(false)
   }
 
   const handlePreview = async (doc) => {
@@ -161,7 +167,6 @@ export function DocumentExtractionView({
       setDocuments(docs || [])
       setExtractedData(data)
       if (claimData) setClaim(claimData)
-      setEditedPayloadJson(JSON.stringify(data, null, 2))
       if (selectedDocId) {
         if (!(docs || []).some((d) => d.id === selectedDocId)) {
           setSelectedDocId(null)
@@ -256,31 +261,15 @@ export function DocumentExtractionView({
     }
   }
 
-  const handleSavePayloadCorrections = async () => {
+  const handleSaveCorrections = async (corrected) => {
     try {
-      const parsed = JSON.parse(editedPayloadJson)
-      if (selectedDocId) {
-        await api.documents.patchDocumentExtraction(claimId, selectedDocId, parsed)
-        setDocData(parsed)
-      } else {
-        await api.documents.patchExtractedData(claimId, {
-          corrected_payload: parsed,
-          correction_note: "Manual adjuster correction",
-        })
-        setExtractedData(parsed)
-      }
-      setIsEditingPayload(false)
-      toast({
-        title: "Corrections Saved",
-        description: "Extracted data patched successfully.",
-        variant: "success",
-      })
+      await api.documents.patchDocumentExtraction(claimId, selectedDocId, corrected)
+      setDocData(corrected)
+      if (isStaff) setExtractedData(await api.documents.getExtractedData(claimId).catch(() => mergedData))
+      setEditingExtraction(false)
+      toast({ title: "Corrections Saved", description: "The extracted data was updated.", variant: "success" })
     } catch (err) {
-      toast({
-        title: "Invalid JSON",
-        description: err.message,
-        variant: "destructive",
-      })
+      toast({ title: "Save Failed", description: err.message, variant: "destructive" })
     }
   }
 
@@ -528,16 +517,18 @@ export function DocumentExtractionView({
                       <span>View Extracted</span>
                     </Button>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={extracting}
-                      onClick={() => handleTriggerExtraction(doc.id)}
-                      className="h-7 text-[11px] gap-1.5 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
-                    >
-                      <Sparkles className="w-3 h-3 text-purple-600" />
-                      <span>Re-Extract</span>
-                    </Button>
+                    {canExtract(doc) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={extracting}
+                        onClick={() => handleTriggerExtraction(doc.id)}
+                        className="h-7 text-[11px] gap-1.5 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
+                      >
+                        <Sparkles className="w-3 h-3 text-purple-600" />
+                        <span>Re-Extract</span>
+                      </Button>
+                    )}
 
                     {canDelete && (
                       <Button
@@ -579,7 +570,12 @@ export function DocumentExtractionView({
       )}
 
       {typedSelected && docData && !docLoading && (
-        <TypedExtractionPanel docType={selectedType} data={docData} />
+        <TypedExtractionPanel
+          docType={selectedType}
+          data={docData}
+          claimId={claimId}
+          onEdit={canEditExtraction ? () => setEditingExtraction(true) : undefined}
+        />
       )}
 
       {/* Structured Bill Data & Adjudication Trigger */}
@@ -880,7 +876,7 @@ export function DocumentExtractionView({
                     }`}
                   >
                     <Code className="w-3.5 h-3.5" />
-                    <span>Raw JSON / Adjuster Override</span>
+                    <span>Raw JSON</span>
                   </button>
                 </div>
               </div>
@@ -904,44 +900,21 @@ export function DocumentExtractionView({
                 </div>
               )}
 
-              {viewMode === "json" && (
-                <div>
-                  {isEditingPayload ? (
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setIsEditingPayload(false)}
-                        className="h-7 text-xs"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={handleSavePayloadCorrections}
-                        className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Save Corrections</span>
-                      </Button>
-                    </div>
-                  ) : isStaff ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setIsEditingPayload(true)}
-                      className="h-7 text-xs gap-1"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>Edit Raw Payload</span>
-                    </Button>
-                  ) : null}
-                </div>
+              {canEditExtraction && (
+                selectedDocId ? (
+                  <Button size="sm" variant="outline" onClick={() => setEditingExtraction(true)} className="h-7 text-xs gap-1">
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Edit Data</span>
+                  </Button>
+                ) : (
+                  <span className="text-[11px] text-slate-500">Select a document (View Extracted) to edit its data</span>
+                )
               )}
             </CardHeader>
 
             <CardContent className="p-0">
               {viewMode === "structured" ? (
+                <div className={activeCitation ? "grid grid-cols-1 xl:grid-cols-2 gap-0" : ""}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-100/90 text-[10px] font-bold uppercase tracking-wider text-slate-600 border-b border-slate-200">
@@ -952,23 +925,38 @@ export function DocumentExtractionView({
                         <th className="py-2.5 px-3.5 w-16 text-center">Qty</th>
                         <th className="py-2.5 px-3.5 w-28 text-right">Unit Price</th>
                         <th className="py-2.5 px-3.5 w-32 text-right">Total Price</th>
+                        <th className="py-2.5 px-3.5 w-20 text-center">Source</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredLineItems.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-6 text-center text-slate-500 text-xs">
+                          <td colSpan={7} className="p-6 text-center text-slate-500 text-xs">
                             No line items found for the selected category.
                           </td>
                         </tr>
                       ) : (
                         filteredLineItems.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                          <tr
+                            key={idx}
+                            onClick={() => item.source?.document_id && setActiveCitation(item.source)}
+                            className={`transition-colors ${item.source?.document_id ? "cursor-pointer" : ""} ${
+                              activeCitation && activeCitation === item.source ? "bg-amber-50" : "hover:bg-slate-50/80"
+                            }`}
+                          >
                             <td className="py-2.5 px-3.5 text-center font-mono text-slate-400 text-[11px]">
                               {item.line_number || idx + 1}
                             </td>
                             <td className="py-2.5 px-3.5 font-medium text-slate-900">
-                              <div>{item.item_name || item.name || "Item"}</div>
+                              <div className="flex items-center gap-1.5">
+                                <span>{item.item_name || item.name || "Item"}</span>
+                                {item.manually_added && (
+                                  <span className="text-[9px] font-bold uppercase px-1 rounded bg-emerald-100 text-emerald-800">Added</span>
+                                )}
+                                {item.manually_edited && (
+                                  <span className="text-[9px] font-bold uppercase px-1 rounded bg-amber-100 text-amber-800">Edited</span>
+                                )}
+                              </div>
                               {item.prescribed_by && (
                                 <span className="text-[10px] text-slate-400">Dr. {item.prescribed_by}</span>
                               )}
@@ -991,6 +979,17 @@ export function DocumentExtractionView({
                             <td className="py-2.5 px-3.5 text-right font-mono font-bold text-slate-900">
                               {formatCurrencyINR(item.total_price_inr || item.total_amount || item.total_price || 0)}
                             </td>
+                            <td className="py-2.5 px-3.5 text-center">
+                              {item.source?.document_id ? (
+                                <CitationButton
+                                  citation={item.source}
+                                  active={activeCitation === item.source}
+                                  onClick={setActiveCitation}
+                                />
+                              ) : (
+                                <span className="text-[10px] text-slate-400" title="Re-extract this document to generate citations">—</span>
+                              )}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -1003,23 +1002,30 @@ export function DocumentExtractionView({
                         <td colSpan={2} className="py-3 px-3.5 text-right font-mono text-sm text-slate-950 font-extrabold">
                           {formatCurrencyINR(totalBilled)}
                         </td>
+                        <td />
                       </tr>
                     </tfoot>
                   </table>
                 </div>
+                {activeCitation && (
+                  <div className="p-3 border-t xl:border-t-0 xl:border-l border-slate-200 bg-slate-50/50">
+                    <div className="xl:sticky xl:top-4">
+                      <CitationViewer
+                        key={citationKey(activeCitation)}
+                        claimId={claimId}
+                        citation={activeCitation}
+                        title="Extracted from"
+                        onClose={() => setActiveCitation(null)}
+                      />
+                    </div>
+                  </div>
+                )}
+                </div>
               ) : (
                 <div className="p-4">
-                  {isEditingPayload ? (
-                    <textarea
-                      value={editedPayloadJson}
-                      onChange={(e) => setEditedPayloadJson(e.target.value)}
-                      className="w-full font-mono text-xs p-3 border border-slate-300 rounded-lg h-72 focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <pre className="font-mono text-xs bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto max-h-80">
-                      {JSON.stringify(extractedData, null, 2)}
-                    </pre>
-                  )}
+                  <pre className="font-mono text-xs bg-slate-900 text-slate-100 p-4 rounded-lg overflow-x-auto max-h-80">
+                    {JSON.stringify(extractedData, null, 2)}
+                  </pre>
                 </div>
               )}
             </CardContent>
@@ -1040,6 +1046,15 @@ export function DocumentExtractionView({
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {editingExtraction && selectedDocId && docData && (
+        <ExtractedDataEditor
+          data={docData}
+          title={`Edit extracted data: ${selectedDoc?.original_filename || "document"}`}
+          onSave={handleSaveCorrections}
+          onCancel={() => setEditingExtraction(false)}
+        />
       )}
 
       {previewDoc && (

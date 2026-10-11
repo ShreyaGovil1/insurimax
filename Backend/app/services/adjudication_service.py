@@ -1,8 +1,12 @@
 """
 Adjudication service — runs the Gemini audit and persists results.
 """
+import asyncio
+import logging
+import re
 import uuid
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +24,200 @@ from app.models.adjudication import (
 from app.models.claim import Claim, ClaimStatus
 from app.models.policy import NonPayableItem, PolicyRule
 from app.schemas.adjudication import FinalizeRequest, LineItemOverrideRequest
-from app.services.document_service import get_claim_extracted_data
+from app.gcp import storage as gcs
+from app.models.document import Document, DocumentType, ExtractionStatus
+from app.services import citation_service
+from app.services.document_service import get_claim_extracted_data, get_document_extraction
+
+logger = logging.getLogger(__name__)
+
+
+# ── Citations & policy evidence (RAG) ─────────────────────────────────────────
+
+_EVIDENCE_PER_ITEM = 2
+_MAX_EVIDENCE = 30
+_EVIDENCE_PROMPT_CHARS = 600
+# Claim-wide topics every adjudication touches, retrieved once in addition to per-item passages
+_GENERAL_EVIDENCE_QUERIES = (
+    "room rent limit per day",
+    "co-payment percentage",
+    "non payable consumables excluded items",
+    "waiting period pre-existing disease",
+    "sum insured",
+)
+
+
+def _without_sources(node):
+    """Copy of the extracted data without citation blocks (the agent doesn't need rects)."""
+    if isinstance(node, dict):
+        return {k: _without_sources(v) for k, v in node.items() if k != "source"}
+    if isinstance(node, list):
+        return [_without_sources(v) for v in node]
+    return node
+
+
+async def _policy_passages(db: AsyncSession, claim_id: uuid.UUID) -> list[dict]:
+    """
+    Retrieval corpus: passages of the claim's uploaded policy document(s), each with a citation.
+    Text-layer PDFs are split into passages; images/scanned PDFs fall back to the extracted
+    coverage rows, which carry their own (page-level) citations.
+    """
+    docs = (
+        await db.execute(
+            select(Document).where(
+                Document.claim_id == claim_id,
+                Document.doc_type == DocumentType.POLICY_DOCUMENT,
+                Document.extraction_status != ExtractionStatus.FAILED,
+            )
+        )
+    ).scalars().all()
+    passages: list[dict] = []
+    for doc in docs:
+        found: list[dict] = []
+        if citation_service.is_pdf(doc.mime_type, doc.original_filename):
+            try:
+                data = await gcs.download_as_bytes(doc.gcs_object_key)
+                found = await asyncio.to_thread(
+                    citation_service.pdf_passages, data, document_id=str(doc.id), filename=doc.original_filename
+                )
+            except Exception as exc:
+                logger.warning("Policy passages unavailable for document %s: %s", doc.id, exc)
+        if not found:
+            job = await get_document_extraction(db, doc.id)
+            payload = (job.corrected_payload or job.extracted_payload) if job else None
+            for row in (payload or {}).get("coverage_items") or []:
+                text = "; ".join(f"{k}: {v}" for k, v in row.items() if k != "source" and v not in (None, ""))
+                src = row.get("source")
+                if not (isinstance(src, dict) and src.get("document_id")):
+                    src = {
+                        "document_id": str(doc.id), "filename": doc.original_filename,
+                        "kind": "pdf" if citation_service.is_pdf(doc.mime_type, doc.original_filename) else "image",
+                        "page": 1, "text": text, "rects": [], "match": "page",
+                    }
+                found.append({"text": text, "citation": src})
+        passages.extend(found)
+    return passages
+
+
+def _select_evidence(passages: list[dict], line_items: list[dict]) -> tuple[list[dict], dict, dict]:
+    """
+    BM25-retrieve the policy passages relevant to each bill line item (plus claim-wide topics).
+    Returns (evidence for the prompt, evidence_id -> citation, line_number -> evidence ids).
+    """
+    order: list[int] = []
+    per_item: dict[int, list[int]] = {}
+    for item in line_items:
+        query = f"{item.get('item_name') or ''} {item.get('item_category') or ''}"
+        hits = citation_service.bm25_rank(query, passages, k=_EVIDENCE_PER_ITEM)
+        per_item[item.get("line_number")] = hits
+        order.extend(hits)
+    for query in _GENERAL_EVIDENCE_QUERIES:
+        order.extend(citation_service.bm25_rank(query, passages, k=1))
+
+    ids: dict[int, str] = {}
+    for idx in order:
+        if idx not in ids and len(ids) < _MAX_EVIDENCE:
+            ids[idx] = f"E{len(ids) + 1}"
+    prompt_evidence = [
+        {
+            "evidence_id": eid,
+            "page": passages[idx]["citation"].get("page"),
+            "text": passages[idx]["text"][:_EVIDENCE_PROMPT_CHARS],
+        }
+        for idx, eid in ids.items()
+    ]
+    by_id = {eid: passages[idx]["citation"] for idx, eid in ids.items()}
+    per_item_ids = {ln: [ids[i] for i in idxs if i in ids] for ln, idxs in per_item.items()}
+    return prompt_evidence, by_id, per_item_ids
+
+
+def _bill_source(line_number, item_name: str | None, line_items: list[dict]) -> dict | None:
+    """Citation of the extracted bill line a decision is about (by line number, else by name)."""
+    for li in line_items:
+        if li.get("line_number") == line_number and isinstance(li.get("source"), dict):
+            return li["source"]
+    best, best_ratio = None, 0.6
+    for li in line_items:
+        ratio = SequenceMatcher(None, (item_name or "").lower(), str(li.get("item_name") or "").lower()).ratio()
+        if ratio > best_ratio and isinstance(li.get("source"), dict):
+            best, best_ratio = li["source"], ratio
+    return best
+
+
+_EXCLUDED_STATUSES = ("non_payable", "rejected")
+
+
+_EVIDENCE_REF = re.compile(r"(?:policy\s+evidence\s+)?\bE(\d+)\b", re.IGNORECASE)
+
+
+def _readable_evidence_refs(summary: dict, evidence_by_id: dict) -> dict:
+    """Evidence ids (E26) mean nothing to users: rewrite them as the policy page they point to."""
+    def repl(match):
+        citation = evidence_by_id.get(f"E{match.group(1)}")
+        return f"policy p.{citation['page']}" if citation and citation.get("page") else match.group(0)
+
+    return {
+        **summary,
+        "overview": _EVIDENCE_REF.sub(repl, summary.get("overview") or ""),
+        "key_reasons": [_EVIDENCE_REF.sub(repl, r) for r in summary.get("key_reasons") or []],
+    }
+
+
+def _count(items: list, singular: str, plural: str) -> str:
+    return f"{len(items)} {singular if len(items) == 1 else plural}"
+
+
+def _inr(amount: float) -> str:
+    return f"Rs. {amount:,.0f}"
+
+
+def _ensure_decision_summary(output: dict, line_decisions: list[dict]) -> dict:
+    """
+    The overall "why" of the adjudication. Uses the agent's decision_summary when it wrote one;
+    otherwise (agent omitted it, or the deterministic rules engine ran) builds it from the
+    line-item decisions so every adjudication has a summary.
+    """
+    summary = output.get("decision_summary") or {}
+    if isinstance(summary, dict) and str(summary.get("overview") or "").strip():
+        return {"overview": summary["overview"].strip(), "key_reasons": summary.get("key_reasons") or [], "generated_by": "ai"}
+
+    def amount(item, key):
+        try:
+            return float(item.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    billed = sum(amount(i, "billed_amount_inr") for i in line_decisions)
+    approved = sum(amount(i, "approved_amount_inr") for i in line_decisions)
+    status_of = lambda i: str(i.get("status") or "").lower()  # noqa: E731
+    accepted = [i for i in line_decisions if status_of(i) == "approved"]
+    reduced = [i for i in line_decisions if status_of(i) == "partially_approved"]
+    excluded = [i for i in line_decisions if status_of(i) in _EXCLUDED_STATUSES]
+    flagged = [i for i in line_decisions if status_of(i) == "flagged"]
+
+    overall = str((output.get("adjudication_summary") or {}).get("status") or "").replace("_", " ").lower()
+    overview = (
+        f"{len(line_decisions)} line items worth {_inr(billed)} were reviewed"
+        + (f" and the claim was {overall}" if overall else "")
+        + f". {_count(accepted, 'was', 'were')} accepted in full and {_inr(approved)} is payable."
+    )
+    if reduced:
+        overview += f" {_count(reduced, 'was', 'were')} reduced (e.g. caps or proportionate deductions)."
+    if excluded:
+        overview += f" {_count(excluded, 'was', 'were')} excluded as not payable under the policy / IRDAI rules."
+    if flagged:
+        overview += f" {_count(flagged, 'needs', 'need')} an adjuster's review."
+
+    reasons = []
+    for label, items, key in (
+        ("Excluded", excluded, "deducted_amount_inr"),
+        ("Reduced", reduced, "deducted_amount_inr"),
+        ("Flagged for review", flagged, "billed_amount_inr"),
+    ):
+        for item in items:
+            why = str(item.get("explanation") or "").strip().split(". ")[0]
+            reasons.append(f"{label}: {item.get('item_name', 'Item')} ({_inr(amount(item, key))}) - {why}")
+    return {"overview": overview, "key_reasons": reasons, "generated_by": "rules"}
 
 
 # ── Helper: map string status from Gemini → enum ─────────────────────────────
@@ -114,13 +311,19 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             for item in npi_result.scalars().all()
         ]
 
+        # ── Policy evidence (RAG over the uploaded policy document) ────────────
+        bill_items = extracted_data.get("line_items") or extracted_data.get("items") or []
+        passages = await _policy_passages(db, claim_id)
+        policy_evidence, evidence_by_id, _ = _select_evidence(passages, bill_items)
+
         # ── Run the ADK adjudication agent ─────────────────────────────────────
         gemini_output, prompt_tokens, completion_tokens = await run_adjudication_agent(
-            extracted_data=extracted_data,
+            extracted_data=_without_sources(extracted_data),
             policy_rules=policy_rules,
             non_payable_items=non_payable_items,
             claim_patient_name=claim.patient_name,
             claim_hospital_name=claim.hospital_name,
+            policy_evidence=policy_evidence,
         )
 
         # ── Parse new 5-step adjudication output ──────────────────────────────
@@ -159,9 +362,18 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             rule_ref = item.get("policy_rule_reference")
             policy_rule_id = rule_id_map.get(rule_ref) if rule_ref else None
 
+            # Citations: the bill line this decision is about, and only the policy passages the
+            # agent says it relied on (retrieved-but-uncited passages are not shown as evidence).
+            line_number = item.get("line_number", idx + 1)
+            policy_citations = [
+                {**evidence_by_id[eid], "evidence_id": eid}
+                for eid in dict.fromkeys(item.get("policy_evidence_ids") or [])
+                if eid in evidence_by_id
+            ]
+
             lid = LineItemDecision(
                 adjudication_result_id=adj.id,
-                line_number=item.get("line_number", idx + 1),
+                line_number=line_number,
                 item_name=item.get("item_name", "Unknown"),
                 item_category=item.get("item_category"),
                 billed_amount_inr=float(item.get("billed_amount_inr", 0)),
@@ -175,6 +387,8 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
                     "policy_rule_reference": rule_ref,
                     "confidence": item.get("confidence"),
                     "cap_analysis": item.get("cap_analysis"),
+                    "source": _bill_source(line_number, item.get("item_name"), bill_items),
+                    "policy_evidence": policy_citations,
                 },
             )
             db.add(lid)
@@ -250,6 +464,9 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         adj.gemini_model_used = settings.GEMINI_MODEL
         adj.prompt_tokens = prompt_tokens
         adj.completion_tokens = completion_tokens
+        gemini_output["decision_summary"] = _readable_evidence_refs(
+            _ensure_decision_summary(gemini_output, line_decisions), evidence_by_id
+        )
         adj.gemini_raw_response = gemini_output
 
         # ── Auto-approval logic driven by 5-step status ────────────────────────

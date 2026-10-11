@@ -179,6 +179,7 @@ EXTRACTION_SYSTEM_PROMPT = """
 You are InsuriMax's document extraction engine.
 Extract structured data from the provided hospital documents (itemized bill, prescription, discharge summary).
 Return ONLY valid JSON — no markdown, no explanation, no prose.
+CITATIONS: every object inside a list (line items, medications, tests, coverage items, amounts) MUST include "source": {"page": <1-based page number of this file where it appears>, "text": "<the exact text of that row/line copied verbatim from the document, same spelling, numbers and punctuation; for table rows include every cell of the row>"}. For an image file use page 1.
 
 Output schema:
 {
@@ -208,7 +209,8 @@ Output schema:
       "total_price_inr": number,
       "date": "ISO8601 | null",
       "prescribed_by": "string | null",
-      "handwritten": boolean
+      "handwritten": boolean,
+      "source": { "page": number, "text": "string" }
     }
   ],
   "total_billed_inr": number,
@@ -223,6 +225,7 @@ You are InsuriMax's document extraction engine.
 {doc_label}
 Return ONLY valid JSON — no markdown, no explanation, no prose.
 Use null for anything not present in the document; never guess or copy values from other kinds of documents.
+CITATIONS: every object inside a list (line items, medications, tests, coverage items, amounts) MUST include "source": {{"page": <1-based page number of this file where it appears>, "text": "<the exact text of that row/line copied verbatim from the document, same spelling, numbers and punctuation; for table rows include every cell of the row>"}}. For an image file use page 1.
 {notes}
 Output schema:
 """
@@ -252,7 +255,7 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
   "treating_doctor": "string | null",
   "length_of_stay_days": number | null,
   "condition_at_discharge": "string | null",
-  "medications_on_discharge": [{ "name": "string", "dosage": "string | null", "duration": "string | null" }],
+  "medications_on_discharge": [{ "name": "string", "dosage": "string | null", "duration": "string | null", "source": { "page": number, "text": "string" } }],
   "follow_up_instructions": "string | null",
 """ + _COMMON_TAIL,
     "prescription": _EXTRACTION_PREAMBLE.format(
@@ -263,7 +266,7 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
   "hospital": { "name": "string | null" },
   "prescription_date": "ISO8601 | null",
   "diagnosis": ["string"],
-  "medications": [{ "name": "string", "dosage": "string | null", "frequency": "string | null", "duration": "string | null", "route": "string | null" }],
+  "medications": [{ "name": "string", "dosage": "string | null", "frequency": "string | null", "duration": "string | null", "route": "string | null", "source": { "page": number, "text": "string" } }],
   "tests_advised": ["string"],
   "advice": "string | null",
 """ + _COMMON_TAIL,
@@ -274,7 +277,7 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
   "lab": { "name": "string | null" },
   "referring_doctor": "string | null",
   "report_date": "ISO8601 | null",
-  "tests": [{ "test_name": "string", "result": "string | null", "unit": "string | null", "reference_range": "string | null", "flag": "normal | high | low | abnormal | null" }],
+  "tests": [{ "test_name": "string", "result": "string | null", "unit": "string | null", "reference_range": "string | null", "flag": "normal | high | low | abnormal | null", "source": { "page": number, "text": "string" } }],
   "summary": "string | null",
 """ + _COMMON_TAIL,
     "consultation_notes": _EXTRACTION_PREAMBLE.format(
@@ -319,7 +322,8 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
       "covered": true | false | null,
       "limit_inr": number | null,
       "limit_description": "string | null (e.g. '1% of sum insured per day', 'up to 60 days before admission')",
-      "conditions": "string | null (waiting period, sub-conditions, co-pay)"
+      "conditions": "string | null (waiting period, sub-conditions, co-pay)",
+      "source": { "page": number, "text": "string" }
     }
   ],
   "insured_members": [{ "name": "string", "relation": "string | null", "date_of_birth": "ISO8601 | null" }],
@@ -336,7 +340,7 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
   "people": ["string"],
   "organizations": ["string"],
   "dates": [{ "label": "string", "date": "ISO8601" }],
-  "amounts": [{ "label": "string", "amount_inr": number }],
+  "amounts": [{ "label": "string", "amount_inr": number, "source": { "page": number, "text": "string" } }],
 """ + _COMMON_TAIL,
 }
 

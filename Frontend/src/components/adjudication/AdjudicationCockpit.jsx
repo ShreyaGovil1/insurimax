@@ -38,6 +38,9 @@ import { useToast } from "../ui/toast"
 import { useAuth } from "../../context/AuthContext"
 import { DocumentExtractionView } from "../documents/DocumentExtractionView"
 import { ClaimQueriesView } from "../queries/ClaimQueriesView"
+import { CitationButton, CitationViewer } from "../documents/CitationViewer"
+import { citationKey } from "../documents/citations"
+import { DecisionSummaryCard } from "./DecisionSummaryCard"
 
 const STAFF_ROLES = ["admin", "adjuster"]
 
@@ -91,6 +94,8 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   const [claim, setClaim] = useState(null)
   const [adjudication, setAdjudication] = useState(null)
   const [selectedItemId, setSelectedItemId] = useState(null)
+  // Citation open in the right-hand viewer: { citation, title } (bill line or policy passage)
+  const [activeCitation, setActiveCitation] = useState(null)
   const [explanation, setExplanation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [runningPipeline, setRunningPipeline] = useState(false)
@@ -176,6 +181,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   }, [claimId])
 
   const handleSelectItem = (item) => {
+    setActiveCitation(null)
     setSelectedItemId(item.id)
     loadExplanation(item.id)
   }
@@ -679,7 +685,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
               <Sparkles className="w-3.5 h-3.5 text-blue-600" />
             </div>
             <div className="text-xl font-bold text-blue-700 mt-1">
-              {Math.round((adjudication?.confidence_score || 0.94) * 100)}%
+              {adjudication?.confidence_score != null ? `${Math.round(adjudication.confidence_score * 100)}%` : "—"}
             </div>
           </div>
           <div className="text-[11px] text-blue-800 font-medium">
@@ -691,6 +697,17 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
           </div>
         </div>
       </div>
+
+      {/* Overall decision summary: why items were accepted, reduced or excluded (not on hospital drafts) */}
+      {!isDraft && (
+      <DecisionSummaryCard
+        adjudication={adjudication}
+        onSelectItem={(item) => {
+          setActiveTab("adjudication")
+          handleSelectItem(item)
+        }}
+      />
+      )}
 
       {/* Cockpit Mode Tabs (Segmented Pills) */}
       <div className="inline-flex items-center p-1 bg-white border border-slate-200/80 rounded-full shadow-2xs">
@@ -934,6 +951,62 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
                     )}
                   </div>
 
+                  {/* Evidence: where the item was billed, and the policy text the decision relied on */}
+                  {(() => {
+                    const cd = selectedItem?.citation_data || explanation.citation_data || {}
+                    const billSource = cd.source
+                    const policyEvidence = cd.policy_evidence || []
+                    const isActive = (c) => activeCitation?.citation === c
+                    return (
+                      <div className="p-3.5 bg-white border border-slate-200 rounded-lg space-y-2.5 text-xs">
+                        <div className="flex items-center space-x-1.5 font-bold text-slate-900">
+                          <FileText className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Evidence & Citations</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-slate-600">Billed on the hospital bill</span>
+                          {billSource?.document_id ? (
+                            <CitationButton
+                              citation={billSource}
+                              label="View bill"
+                              active={isActive(billSource)}
+                              onClick={(c) => setActiveCitation({ citation: c, title: "Billed on" })}
+                            />
+                          ) : (
+                            <span className="text-[10px] text-slate-400">Not available: re-extract the bill</span>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <span className="text-slate-600 block">Policy text this decision relies on</span>
+                          {policyEvidence.length === 0 ? (
+                            <span className="text-[10px] text-slate-400 block">
+                              No policy passage was cited for this decision.
+                            </span>
+                          ) : (
+                            policyEvidence.map((ev) => (
+                              <div
+                                key={ev.evidence_id}
+                                className={`p-2 rounded border text-[11px] ${
+                                  isActive(ev) ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"
+                                }`}
+                              >
+                                <p className="text-slate-700 leading-relaxed line-clamp-3">“{ev.text}”</p>
+                                <div className="mt-1.5 text-right">
+                                  <CitationButton
+                                    citation={ev}
+                                    label="View in policy"
+                                    active={isActive(ev)}
+                                    onClick={(c) => setActiveCitation({ citation: c, title: "Policy clause relied on" })}
+                                  />
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
+
                   {/* Adjuster's override decision, visible to both parties */}
                   {selectedItem?.is_overridden && (
                     <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 text-xs">
@@ -970,6 +1043,16 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
               <div className="p-8 text-center bg-white rounded-xl border border-slate-200 text-slate-500 text-xs">
                 Select a line item from the schedule to inspect policy citations.
               </div>
+            )}
+
+            {activeCitation && (
+              <CitationViewer
+                key={citationKey(activeCitation.citation)}
+                claimId={claimId}
+                citation={activeCitation.citation}
+                title={activeCitation.title}
+                onClose={() => setActiveCitation(null)}
+              />
             )}
           </div>
         </div>

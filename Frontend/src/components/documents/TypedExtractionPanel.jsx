@@ -1,9 +1,14 @@
-import React, { useState } from "react"
-import { Code, Table as TableIcon } from "lucide-react"
+import React, { createContext, useContext, useState } from "react"
+import { Code, Pencil, Table as TableIcon } from "lucide-react"
 import { formatCurrencyINR } from "../../lib/utils"
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card"
 import { Button } from "../ui/button"
 import { Badge } from "../ui/badge"
+import { CitationButton, CitationViewer } from "./CitationViewer"
+import { citationKey } from "./citations"
+
+// Lets any table row open its source citation in the panel's viewer
+const CitationContext = createContext({ active: null, onCite: null })
 
 const DOC_TYPE_LABELS = {
   itemized_bill: "Itemized Hospital Bill",
@@ -72,8 +77,10 @@ function Text({ title, value }) {
 }
 
 function DataTable({ title, columns, rows }) {
+  const { active, onCite } = useContext(CitationContext)
   const list = rows || []
   if (list.length === 0) return null
+  const cited = Boolean(onCite) && list.some((r) => r?.source?.document_id)
   return (
     <div className="p-4 border-b border-slate-100 last:border-b-0">
       <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5">{title}</h4>
@@ -84,11 +91,24 @@ function DataTable({ title, columns, rows }) {
               {columns.map((c) => (
                 <th key={c.key} className="py-2 px-3">{c.label}</th>
               ))}
+              {cited && <th className="py-2 px-3 text-center">Source</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {list.map((row, i) => (
-              <tr key={i}>
+              <tr
+                key={i}
+                className={
+                  cited && active === row?.source
+                    ? "bg-amber-50"
+                    : row?.manually_added
+                    ? "bg-emerald-50/60"
+                    : row?.manually_edited
+                    ? "bg-amber-50/40"
+                    : undefined
+                }
+                title={row?.manually_added ? "Added manually" : row?.manually_edited ? "Edited manually" : undefined}
+              >
                 {columns.map((c) => {
                   const raw = row?.[c.key]
                   const v = c.format ? c.format(raw) : raw
@@ -96,6 +116,11 @@ function DataTable({ title, columns, rows }) {
                     <td key={c.key} className="py-2 px-3 text-slate-800">{isEmpty(v) ? "—" : String(v)}</td>
                   )
                 })}
+                {cited && (
+                  <td className="py-2 px-3 text-center">
+                    <CitationButton citation={row?.source} active={active === row?.source} onClick={onCite} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -342,8 +367,9 @@ function renderSections(docType, d) {
   }
 }
 
-export function TypedExtractionPanel({ docType, data }) {
+export function TypedExtractionPanel({ docType, data, claimId, onEdit }) {
   const [mode, setMode] = useState("structured")
+  const [activeCitation, setActiveCitation] = useState(null)
   const d = data || {}
   const notes = (d.extraction_notes || []).filter(Boolean)
 
@@ -359,6 +385,11 @@ export function TypedExtractionPanel({ docType, data }) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {onEdit && (
+            <Button size="sm" variant="outline" className="h-7 text-xs gap-1 mr-1" onClick={onEdit}>
+              <Pencil className="w-3.5 h-3.5" /> Edit Data
+            </Button>
+          )}
           <Button size="sm" variant={mode === "structured" ? "default" : "outline"} className="h-7 text-xs gap-1" onClick={() => setMode("structured")}>
             <TableIcon className="w-3.5 h-3.5" /> Structured
           </Button>
@@ -373,10 +404,27 @@ export function TypedExtractionPanel({ docType, data }) {
             {JSON.stringify(d, null, 2)}
           </pre>
         ) : (
-          <>
-            {renderSections(docType, d)}
-            <Chips title="Extraction notes" items={notes} />
-          </>
+          <CitationContext.Provider value={{ active: activeCitation, onCite: claimId ? setActiveCitation : null }}>
+            <div className={activeCitation ? "grid grid-cols-1 xl:grid-cols-2" : ""}>
+              <div>
+                {renderSections(docType, d)}
+                <Chips title="Extraction notes" items={notes} />
+              </div>
+              {activeCitation && (
+                <div className="p-3 border-t xl:border-t-0 xl:border-l border-slate-200 bg-slate-50/50">
+                  <div className="xl:sticky xl:top-4">
+                    <CitationViewer
+                      key={citationKey(activeCitation)}
+                      claimId={claimId}
+                      citation={activeCitation}
+                      title="Extracted from"
+                      onClose={() => setActiveCitation(null)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </CitationContext.Provider>
         )}
       </CardContent>
     </Card>

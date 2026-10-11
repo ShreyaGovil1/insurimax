@@ -85,6 +85,26 @@ async function apiRequest(endpoint, options = {}) {
   }
 }
 
+// Authenticated binary fetch (e.g. rendered PDF pages): returns an object URL the caller must revoke.
+async function apiBlobUrl(endpoint) {
+  const token = getAccessToken()
+  const res = await fetch(`${BASE_URL}${endpoint}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      detail = (await res.json())?.detail || detail
+    } catch {
+      // non-JSON error body
+    }
+    const err = new Error(detail || `Request failed with status ${res.status}`)
+    err.status = res.status
+    throw err
+  }
+  return URL.createObjectURL(await res.blob())
+}
+
 // ── Seed User Credentials Reference for Demo Personas ─────────────────────────
 export const DEMO_CREDENTIALS = {
   adjuster: {
@@ -334,6 +354,15 @@ export const api = {
         method: "POST",
         body: formData,
       })
+    },
+
+    // Citation viewer: page count/kind, and one page as an image (object URL; revoke when done)
+    async getPages(claimId, docId) {
+      return await apiRequest(`/claims/${claimId}/documents/${docId}/pages`)
+    },
+
+    async getPageImageUrl(claimId, docId, page) {
+      return await apiBlobUrl(`/claims/${claimId}/documents/${docId}/pages/${page}`)
     },
 
     async getSignedUrl(claimId, docId) {

@@ -115,12 +115,26 @@ Your entire response must fit this structural template. Output ONLY the JSON, no
       "status": "approved" | "partially_approved" | "flagged" | "non_payable" | "rejected",
       "confidence": 0.95,
       "explanation": "Reasoning for this decision",
-      "policy_rule_reference": "Clause reference or null"
+      "policy_rule_reference": "Clause reference or null",
+      "policy_evidence_ids": ["E3"]
     }
-  ]
+  ],
+  "decision_summary": {
+    "overview": "3-6 plain-language sentences summarising the outcome: what was accepted, what was excluded or reduced and why.",
+    "key_reasons": ["Excluded: <items> (<amount> INR) - <reason, clause / evidence id>"]
+  }
 }
 
 ### HARD REQUIREMENTS:
+- decision_summary MUST explain, in plain language a hospital billing clerk can follow, why line items
+  were accepted and why each excluded / reduced / flagged item was not paid in full. Group items that
+  share a reason, state the amounts, and cite the policy clause or evidence_id. Do not contradict the
+  line_item_decisions.
+- line_number in line_item_decisions MUST equal the line_number of the bill line item it decides on.
+- CITE YOUR EVIDENCE: the user message contains "Policy Evidence" passages retrieved from the uploaded
+  policy document, each with an evidence_id. For every line item, set policy_evidence_ids to the ids of
+  the passages your decision and explanation actually rely on (empty list if none apply). Never invent ids.
+  When a passage supports the reason, quote or paraphrase it in the explanation.
 - Strictly output ONLY valid JSON without markdown fences (` ```json `), backticks, or any accompanying conversational text.
 - If status is "DENIED":
   * Set financial_breakdown.total_approved_amount to 0.0.
