@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { AlertCircle, ArrowRight, Check, CheckCircle2, Clock3, History, RefreshCw, Save, ShieldAlert, SlidersHorizontal, Activity } from "lucide-react"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
@@ -12,12 +12,15 @@ import { Skeleton } from "../ui/skeleton"
 import { EmptyState } from "../ui/empty-state"
 import { useToast } from "../ui/toast"
 import { PageHeader } from "../common/PageHeader"
+import { ClaimProcessAuditTrail } from "./ClaimProcessView"
 
 export function AnalyticsComplianceView() {
   const { user } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState("overview") // "overview" | "audit_trail" | "thresholds"
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedClaimParam = searchParams.get("claim") || null
+  const [activeTab, setActiveTab] = useState(() => (selectedClaimParam ? "audit_trail" : "overview"))
   const [slaReport, setSlaReport] = useState(null)
   const [anomalies, setAnomalies] = useState([])
   const [auditEntries, setAuditEntries] = useState([])
@@ -25,6 +28,27 @@ export function AnalyticsComplianceView() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [investigatingId, setInvestigatingId] = useState(null)
+
+  useEffect(() => {
+    if (selectedClaimParam) {
+      setActiveTab("audit_trail")
+    }
+  }, [selectedClaimParam])
+
+  const handleSelectClaim = (claimIdOrNumber) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (claimIdOrNumber) {
+        next.set("claim", claimIdOrNumber)
+      } else {
+        next.delete("claim")
+      }
+      return next
+    })
+    if (claimIdOrNumber) {
+      setActiveTab("audit_trail")
+    }
+  }
 
   // Auto-approval thresholds state
   const [thresholds, setThresholds] = useState({
@@ -41,7 +65,7 @@ export function AnalyticsComplianceView() {
       const [report, anomData, auditData] = await Promise.all([
         api.compliance.getSlaReport(30).catch(() => null),
         api.compliance.getAnomalies().catch(() => ({ anomalies: [] })),
-        api.compliance.getAuditTrail({ limit: 50 }).catch(() => ({ entries: [] })),
+        api.compliance.getAuditTrail({ limit: 100 }).catch(() => ({ entries: [] })),
       ])
       setSlaReport(report)
       setAnomalies(anomData?.anomalies || [])
@@ -205,71 +229,29 @@ export function AnalyticsComplianceView() {
         )}
 
         {activeTab === "audit_trail" && (
-          <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Audit trail">
-            <div className="border-b border-line px-5 py-4">
-              <h2 className="text-body font-semibold text-ink">Immutable audit trail</h2>
-              <p className="text-small text-ink-3">
-                Every claim status change and sign-off, newest first.
-                {auditTotal > auditEntries.length && ` Showing the latest ${auditEntries.length} of ${auditTotal}.`}
-              </p>
-            </div>
+          <section aria-label="Audit trail and claim lifecycle">
             {loading ? (
-              <div className="space-y-3 p-5">
+              <div className="space-y-3 rounded-card border border-line bg-surface p-5 shadow-card">
                 {[0, 1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
+                  <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
             ) : auditEntries.length === 0 ? (
-              <EmptyState icon={History} title="No audit records in this window" description="Status changes are recorded here as claims move." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-line text-left text-small font-semibold text-ink-3">
-                      <th className="py-2.5 pl-5 pr-3 font-semibold">When</th>
-                      <th className="px-3 py-2.5 font-semibold">Claim</th>
-                      <th className="px-3 py-2.5 font-semibold">Change</th>
-                      <th className="py-2.5 pl-3 pr-5 font-semibold">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {auditEntries.map((e, idx) => (
-                      <tr key={idx} className="align-top transition-colors hover:bg-ground/60">
-                        <td className="whitespace-nowrap py-3 pl-5 pr-3">
-                          <div className="font-medium text-ink-2">{formatRelative(e.timestamp)}</div>
-                          <div className="figures text-tiny text-ink-3">{formatDateTime(e.timestamp)}</div>
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-3">
-                          {e.claim_id ? (
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/claims/${e.claim_id}`)}
-                              className="cursor-pointer font-mono text-small text-peacock-700 underline-offset-4 hover:underline"
-                              title={e.claim_id}
-                            >
-                              {e.claim_number || `${e.claim_id?.slice(0, 13)}…`}
-                            </button>
-                          ) : (
-                            <span className="text-ink-4">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {e.from_status && (
-                              <>
-                                <Badge variant="outline">{humanize(e.from_status)}</Badge>
-                                <ArrowRight className="h-3.5 w-3.5 text-ink-4" />
-                              </>
-                            )}
-                            <Badge variant="dark">{humanize(e.to_status)}</Badge>
-                          </div>
-                        </td>
-                        <td className="max-w-md py-3 pl-3 pr-5 text-small text-ink-2">{e.note || "System event"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="rounded-card border border-line bg-surface shadow-card">
+                <EmptyState
+                  icon={History}
+                  title="No audit records in this window"
+                  description="Status changes are recorded here as claims move through adjudication."
+                />
               </div>
+            ) : (
+              <ClaimProcessAuditTrail
+                auditEntries={auditEntries}
+                auditTotal={auditTotal}
+                loading={loading}
+                selectedClaimId={selectedClaimParam}
+                onSelectClaimId={handleSelectClaim}
+              />
             )}
           </section>
         )}

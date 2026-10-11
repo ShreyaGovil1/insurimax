@@ -30,6 +30,34 @@ import { JourneyRail } from "../common/JourneyRail"
 
 const SAMPLE_CLAIMS = [
   {
+    id: "Mukkera Srikanth",
+    label: "Mukkera Srikanth (Apollo • 9930021169)",
+    patient_name: "Mr Mukkera Srikanth",
+    claim_number: "DP-20261011-F72DC9",
+    policy_number: "99888584",
+    hospital_name: "Apollo Health City",
+    insurer_name: "Care Health Insurance Limited",
+    billed_amount: 141650,
+    approved_amount: 141650,
+    deducted_amount: 0,
+    status: "in_review",
+    sla_breached: true,
+  },
+  {
+    id: "Padma B N",
+    label: "Padma B N (Sunrise • 9345067890)",
+    patient_name: "Padma B N",
+    claim_number: "DP-20261010-176118",
+    policy_number: "SH-99201",
+    hospital_name: "Sunrise Multispeciality Hospital",
+    insurer_name: "Care Health Insurance Limited",
+    billed_amount: 85000,
+    approved_amount: 65000,
+    deducted_amount: 20000,
+    status: "in_review",
+    sla_breached: false,
+  },
+  {
     id: "88888888-8888-8888-8888-888888888881",
     label: "CLM-2026-8821 (Ramesh • Star Health)",
     patient_name: "Ramesh Chawla",
@@ -55,20 +83,6 @@ const SAMPLE_CLAIMS = [
     approved_amount: 215000,
     deducted_amount: 30000,
     status: "queried",
-    sla_breached: false,
-  },
-  {
-    id: "88888888-8888-8888-8888-888888888884",
-    label: "CLM-2026-8824 (Meera • Niva Bupa)",
-    patient_name: "Meera Krishnan",
-    claim_number: "CLM-2026-8824",
-    policy_number: "NB-REASSURE-102",
-    hospital_name: "Manipal Hospital, Old Airport Rd",
-    insurer_name: "Niva Bupa Health Insurance",
-    billed_amount: 98000,
-    approved_amount: 82000,
-    deducted_amount: 16000,
-    status: "approved",
     sla_breached: false,
   },
 ]
@@ -324,13 +338,17 @@ export function PatientStatusView() {
   const [agentResult, setAgentResult] = useState(null)
   const [copiedField, setCopiedField] = useState("")
   const [agentInfoOpen, setAgentInfoOpen] = useState(false)
+  const [matchingClaims, setMatchingClaims] = useState([])
+  const [escalationData, setEscalationData] = useState(null)
 
   const handleTriggerBrowserAgent = async () => {
     setRunningAgent(true)
     setAgentResult(null)
     const targetId = claimStatus?.id || claimIdInput
     try {
-      const res = await api.patient.triggerBimaBharosaAutofill(targetId, {
+      const res = await api.patient.triggerEscalationAutofill({
+        claimId: claimStatus?.id,
+        query: targetId,
         issueType: activeIssue,
         headless: false,
       })
@@ -472,12 +490,53 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
     setTimeout(() => setCopiedField(""), 2500)
   }
 
-  const fetchStatus = async (id) => {
+  const fetchStatus = async (id, issueType = activeIssue) => {
     if (!id) return
     setLoading(true)
     setNotFound(false)
-    const sampleMeta = SAMPLE_CLAIMS.find((s) => s.id === id || s.claim_number === id)
+    const sampleMeta = SAMPLE_CLAIMS.find(
+      (s) => s.id === id || s.claim_number === id || s.patient_name?.toLowerCase() === id.toLowerCase()
+    )
     try {
+      // 1. First priority: Patient Escalation endpoint (searches by patient name, phone, or claim number)
+      let escalationRes = null
+      try {
+        escalationRes = await api.patient.lookupEscalation({
+          query: id,
+          issueType: issueType || "discharge_delay",
+        })
+      } catch {}
+
+      if (escalationRes?.status === "success" && escalationRes?.claim) {
+        const c = escalationRes.claim
+        setClaimStatus({
+          ...(sampleMeta || {}),
+          ...c,
+          id: c.id,
+          claim_id: c.id,
+          status: c.status || "in_review",
+          patient_name: c.patient_name || "Patient Record",
+          hospital_name: c.hospital_name || "Apollo Hospital",
+          insurer_name: c.insurer_name || "Star Health",
+          billed_amount: c.billed_amount || 0,
+          approved_amount: c.approved_amount || 0,
+          deducted_amount: c.deducted_amount || 0,
+          claim_number: c.claim_number || "CLM-2026-8821",
+          policy_number: c.policy_number || "POL-STAR-7731",
+          sla_breached: c.sla_breached ?? false,
+        })
+        setMatchingClaims(escalationRes.matching_claims || [])
+        setEscalationData(escalationRes.escalation || null)
+        if (escalationRes.escalation?.bima_bharosa_payload) {
+          setBimaPayload(escalationRes.escalation.bima_bharosa_payload)
+        }
+        if (escalationRes.escalation?.issue_type) {
+          setActiveIssue(escalationRes.escalation.issue_type)
+        }
+        return
+      }
+
+      // 2. Direct claim lookups and sample fallbacks
       let fullClaim = null
       try {
         fullClaim = await api.claims.getById(id)
@@ -488,9 +547,11 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
       if (!fullClaim && !patientData && !sampleMeta) {
         setNotFound(true)
         setClaimStatus(null)
+        setMatchingClaims([])
+        setEscalationData(null)
         toast({
-          title: "Claim Not Found",
-          description: "Please check your Claim Intimation ID or pick a sample claim.",
+          title: "Claim or Patient Not Found",
+          description: "No hospital records found matching this patient name, phone, or claim number.",
           variant: "destructive",
         })
         return
@@ -511,12 +572,15 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
         policy_number: fullClaim?.policy_number || sampleMeta?.policy_number || "POL-STAR-7731",
         sla_breached: fullClaim?.sla_breached ?? sampleMeta?.sla_breached ?? false,
       })
+      setMatchingClaims([])
     } catch (err) {
       setNotFound(true)
       setClaimStatus(null)
+      setMatchingClaims([])
+      setEscalationData(null)
       toast({
-        title: "Claim Not Found",
-        description: "Please check your Claim Intimation ID or pick a sample claim.",
+        title: "Record Not Found",
+        description: "Please check your patient name, phone number, or Claim Intimation ID.",
         variant: "destructive",
       })
     } finally {
@@ -659,15 +723,15 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-3" />
               <Input
                 type="text"
-                aria-label="Claim number"
-                placeholder="Enter your claim number, e.g. CLM-2026-8821"
+                aria-label="Patient name, phone number, or claim number"
+                placeholder="Enter patient name, phone number, or claim number (e.g. Srikanth or 9930021169)"
                 value={claimIdInput}
                 onChange={(e) => setClaimIdInput(e.target.value)}
                 className="h-13 rounded-xl pl-12 text-body ring-0"
               />
             </div>
             <Button type="submit" variant="proceed" size="lg" loading={loading} className="h-13 px-6">
-              {loading ? "Checking…" : "Track claim"}
+              {loading ? "Pulling hospital data…" : "Pull claim & escalate"}
               {!loading && <ArrowRight className="h-4 w-4" />}
             </Button>
           </form>
@@ -701,12 +765,49 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
           <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-vermilion-50 text-vermilion-600">
             <AlertCircle className="h-6 w-6" />
           </span>
-          <h2 className="text-lg font-semibold text-ink">We couldn't find that claim</h2>
-          <p className="mt-1 max-w-sm text-sm text-ink-3">Check the claim number on your hospital intimation slip, or try one of the samples above.</p>
+          <h2 className="text-lg font-semibold text-ink">We couldn't find hospital records for that patient or claim</h2>
+          <p className="mt-1 max-w-sm text-sm text-ink-3">Check the patient name or 10-digit mobile number, or try one of the samples above.</p>
         </section>
       ) : (
-        <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Claim status">
-          <div className="flex flex-col gap-4 p-5 sm:p-7 md:flex-row md:items-start md:justify-between">
+        <>
+          {matchingClaims.length > 1 && (
+            <section className="rounded-card border border-line bg-surface p-4 sm:p-5 shadow-card animate-rise">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-small font-semibold text-peacock-700">Hospital Claims Found</div>
+                  <div className="text-sm text-ink-2">
+                    Found {matchingClaims.length} hospital admissions for <strong>{claimStatus?.patient_name}</strong>. Select which claim you want to escalate:
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {matchingClaims.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        fetchStatus(c.id)
+                        navigate(`/patient/${c.id}`)
+                      }}
+                      className={cn(
+                        "cursor-pointer inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-small font-semibold transition-all border",
+                        c.id === claimStatus?.id
+                          ? "bg-peacock-700 text-white border-peacock-700 shadow-sm"
+                          : "bg-surface text-ink border-line hover:bg-ground"
+                      )}
+                    >
+                      <Building2 className="h-3.5 w-3.5" />
+                      <span>{c.hospital_name}</span>
+                      <span className="font-mono text-tiny opacity-75">{c.claim_number}</span>
+                      <span className="figures text-tiny font-bold">{formatCurrencyINR(c.billed_amount || 0)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
+          <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Claim status">
+            <div className="flex flex-col gap-4 p-5 sm:p-7 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-small text-ink-3">
                 <span>Claim {claimStatus?.claim_number || "CLM-2026-8821"}</span>
@@ -778,7 +879,6 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
             </div>
           </div>
         </section>
-      )}
 
       {/* Rights */}
       <section className="space-y-5" aria-label="Your rights at the hospital">
@@ -871,41 +971,73 @@ ${bimaPayload.statutory_citations?.map((c) => `- ${c}`).join("\n")}
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 rounded-card bg-peacock-800 p-5 text-white shadow-raised sm:p-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-small font-semibold text-marigold-300">Official grievance portals</div>
-            <div className="mt-1 text-body font-semibold">Insurer delayed or refused without a legal reason?</div>
-            <p className="mt-0.5 max-w-xl text-small text-peacock-100/80">
-              Let our assistant prefill the IRDAI Bima Bharosa complaint for{" "}
-              <span className="font-semibold text-white">{selectedStuckItem.title}</span>, or go straight to the dispute bodies.
-            </p>
+        <div className="flex flex-col gap-5 rounded-[20px] bg-peacock-900 p-6 text-white shadow-raised ring-1 ring-white/10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-marigold-400/20 px-3 py-1 text-tiny font-bold uppercase tracking-wider text-marigold-300 ring-1 ring-inset ring-marigold-400/30">
+                Official IRDAI Grievance Escalation
+              </div>
+              <h3 className="mt-2 text-xl font-bold tracking-tight">
+                Raise Concern on Government Site (Bima Bharosa)
+              </h3>
+              <p className="mt-1 max-w-2xl text-small text-peacock-100/85">
+                Claim details for <span className="font-semibold text-white">{claimStatus?.patient_name}</span> at{" "}
+                <span className="font-semibold text-white">{claimStatus?.hospital_name}</span> pulled from hospital records.
+                Our AI assistant prepares an IRDAI-compliant grievance and can autofill all 11 fields directly on the government portal.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                variant="proceed"
+                size="lg"
+                loading={runningAgent}
+                onClick={handleTriggerBrowserAgent}
+                className="shadow-lg"
+              >
+                {!runningAgent && <Zap className="h-4 w-4" />}
+                {runningAgent ? "Opening Chrome & Prefilling…" : "1-Click Live Browser Autofill"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={handleOpenPortalInTab}
+                className="bg-white/15 text-white hover:bg-white/20 border-0"
+              >
+                <Sparkles className="h-4 w-4 text-marigold-300" />
+                Open Portal & Copy Script
+              </Button>
+              <Button
+                variant="ghost"
+                size="lg"
+                onClick={() => handleOpenBimaAutofill(activeIssue)}
+                className="text-white hover:bg-white/10"
+              >
+                View Prefilled Packet
+              </Button>
+            </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button variant="proceed" onClick={() => handleOpenBimaAutofill(activeIssue)}>
-              <Sparkles className="h-4 w-4" />
-              Prefill Bima Bharosa complaint
-            </Button>
-            <a
-              href="https://bimabharosa.irdai.gov.in/RegComplaint/RegisterComplaint"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 items-center gap-1.5 rounded-field bg-white/10 px-3.5 text-sm font-semibold ring-1 ring-inset ring-white/15 transition-colors hover:bg-white/15"
-            >
-              IRDAI portal
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-            <a
-              href="https://www.cioins.co.in/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 items-center gap-1.5 rounded-field bg-white/10 px-3.5 text-sm font-semibold ring-1 ring-inset ring-white/15 transition-colors hover:bg-white/15"
-            >
-              Insurance Ombudsman
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
+
+          <div className="grid gap-3 rounded-xl bg-white/5 p-4 sm:grid-cols-3 ring-1 ring-inset ring-white/10 text-small">
+            <div className="min-w-0">
+              <div className="text-tiny uppercase text-peacock-200">Patient & Hospital</div>
+              <div className="truncate font-semibold text-white">{claimStatus?.patient_name} · {claimStatus?.hospital_name}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-tiny uppercase text-peacock-200">Claim & Policy</div>
+              <div className="truncate font-mono font-medium text-white">{claimStatus?.claim_number} · {claimStatus?.policy_number}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-tiny uppercase text-peacock-200">Financial Quantum</div>
+              <div className="truncate font-semibold text-white">
+                Billed: {formatCurrencyINR(claimStatus?.billed_amount || 0)}
+                {claimStatus?.deducted_amount ? ` · Deducted: ${formatCurrencyINR(claimStatus.deducted_amount)}` : ""}
+              </div>
+            </div>
           </div>
         </div>
       </section>
+    </>
+  )}
 
       {/* Customer Information Sheet */}
       <Dialog open={cisModalOpen} onOpenChange={setCisModalOpen}>

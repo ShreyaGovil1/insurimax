@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Activity, Check, ChevronDown, FileStack, Inbox, LogIn, LogOut, Plus, Settings, Loader2 } from "lucide-react"
+import { Activity, Check, ChevronDown, FileStack, Inbox, LogIn, LogOut, Plus, SearchCheck, Settings, Loader2 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
 import { useToast } from "../ui/toast"
@@ -11,6 +11,7 @@ import { cn } from "../../lib/utils"
 const BASE_NAV_ITEMS = [
   { id: "queue", path: "/queue", label: "Queue", hospitalLabel: "Desk", icon: Inbox },
   { id: "claims", path: "/claims", label: "Claims", icon: FileStack },
+  { id: "patient", path: "/patient", label: "Track claim", icon: SearchCheck },
 ]
 
 const ANALYTICS_NAV_ITEM = { id: "analytics", path: "/analytics", label: "Analytics & audit", icon: Activity }
@@ -86,6 +87,7 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
     const path = location.pathname
     if (item.id === "queue" && (path === "/" || path === "")) return true
     if (item.id === "claims") return path.startsWith("/claims")
+    if (item.id === "patient") return path.startsWith("/patient")
     return path === item.path || path.startsWith(item.path + "/")
   }
 
@@ -141,9 +143,33 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
           )}
 
           {!user && (
-            <Button size="sm" variant="on-dark" onClick={() => navigate("/login")}>
-              <LogIn className="h-4 w-4" />
-              Staff sign in
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate("/patient")}
+                className="gap-1.5 border-peacock-400/40 bg-peacock-900/40 text-peacock-100 hover:border-peacock-300 hover:bg-white/10 hover:text-white"
+              >
+                <SearchCheck className="h-4 w-4 text-marigold-400" />
+                <span className="font-medium">Check claim status</span>
+              </Button>
+              <Button size="sm" variant="on-dark" onClick={() => navigate("/login")}>
+                <LogIn className="h-4 w-4" />
+                Staff sign in
+              </Button>
+            </div>
+          )}
+
+          {user && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate("/patient")}
+              className="hidden lg:inline-flex gap-1.5 border-peacock-400/30 bg-white/5 text-peacock-100 hover:border-peacock-300 hover:bg-white/10 hover:text-white"
+              title="Track patient claims & IRDAI escalation"
+            >
+              <SearchCheck className="h-3.5 w-3.5 text-marigold-400" />
+              <span>Track claim</span>
             </Button>
           )}
 

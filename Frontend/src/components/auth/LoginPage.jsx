@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react"
+import { ArrowRight, Eye, EyeOff, Lock, Mail, SearchCheck } from "lucide-react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
@@ -202,7 +202,29 @@ export function LoginPage({ onLogin }) {
             </Button>
           </form>
 
-          <div className="mt-10">
+          <div className="mt-6 rounded-xl border border-peacock-200/80 bg-peacock-50/70 p-3.5 transition-all">
+            <div className="flex items-start gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-peacock-100 text-peacock-800">
+                <SearchCheck className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-small font-semibold text-peacock-900">Patient or family member?</div>
+                <p className="mt-0.5 text-tiny text-peacock-700 leading-snug">
+                  Track your cashless claim status, check deductions, or raise an IRDAI Bima Bharosa escalation without logging in.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate("/patient")}
+                  className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-peacock-800 hover:text-peacock-950 hover:underline"
+                >
+                  <span>Check claim status</span>
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8">
             <div className="flex items-center gap-3 text-small font-medium text-ink-3">
               <span className="h-px flex-1 bg-line" />
               or fill in a demo persona

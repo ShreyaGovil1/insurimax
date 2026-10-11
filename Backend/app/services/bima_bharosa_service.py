@@ -88,21 +88,23 @@ def generate_bima_bharosa_payload(
     Strictly adheres to the portal 400-character complaint text limit.
     """
     complainant = complainant_override or {}
-    patient_name = complainant.get("name") or claim.get("patient_name") or "Policyholder"
-    mobile = complainant.get("mobile") or claim.get("patient_phone") or "9876543210"
-    email = complainant.get("email") or "grievance@insurimax.ai"
-    pincode = complainant.get("pincode") or "560076"
-    district = complainant.get("district") or "Bengaluru Urban"
-    state = complainant.get("state") or "Karnataka"
+    patient_name = complainant.get("name") or claim.get("patient_name") or ""
+    raw_mobile = complainant.get("mobile") or claim.get("patient_phone") or ""
+    clean_mobile = re.sub(r"\D", "", raw_mobile)
+    mobile = clean_mobile[-10:] if len(clean_mobile) >= 10 else clean_mobile
+    email = complainant.get("email") or claim.get("patient_email") or ""
+    pincode = complainant.get("pincode") or claim.get("pincode") or ""
+    district = complainant.get("district") or claim.get("district") or ""
+    state = complainant.get("state") or claim.get("state") or ""
 
-    insurer_raw = claim.get("insurer_name") or "Star Health"
-    company_name = resolve_irdai_company(insurer_raw)
-    claim_number = claim.get("claim_number") or "CLM-2026-8821"
-    policy_number = claim.get("policy_number") or "SH-GOLD-99201"
-    hospital_name = claim.get("hospital_name") or "Apollo Hospital"
-    billed = claim.get("billed_amount") or 185000
-    approved = claim.get("approved_amount") or 155000
-    deducted = claim.get("deducted_amount") or 30000
+    insurer_raw = claim.get("insurer_name") or ""
+    company_name = resolve_irdai_company(insurer_raw) if insurer_raw else ""
+    claim_number = claim.get("claim_number") or ""
+    policy_number = claim.get("policy_number") or ""
+    hospital_name = claim.get("hospital_name") or ""
+    billed = claim.get("billed_amount") or 0
+    approved = claim.get("approved_amount") or 0
+    deducted = claim.get("deducted_amount") or 0
 
     citations = ["IRDAI Master Circular 2024 (IRDAI/HLT/REG/2024)"]
 
@@ -165,6 +167,162 @@ def generate_bima_bharosa_payload(
         complaint_details=clean_details,
         statutory_citations=citations,
     )
+
+
+def generate_bima_bharosa_script(payload: Dict[str, Any]) -> str:
+    """
+    Generates a self-contained 1-click autofill script that works via Bookmarklet
+    or browser Developer Console with autoscroll and green field highlighting.
+    """
+    import json
+
+    name_json = json.dumps(payload.get("name") or "")
+    email_json = json.dumps(payload.get("email") or "")
+    pincode_json = json.dumps(payload.get("pincode") or "")
+    company_json = json.dumps(payload.get("insurance_company_name") or "")
+    identifier_json = json.dumps(payload.get("identifier_number") or "")
+    complaint_json = json.dumps((payload.get("complaint_details") or "")[:400])
+    raw_mobile = payload.get("mobile") or ""
+    clean_mob = re.sub(r"\D", "", raw_mobile)
+    mobile_val = clean_mob[-10:] if len(clean_mob) >= 10 else clean_mob
+    mobile_json = json.dumps(mobile_val)
+
+    return f"""(async function(){{
+  try {{
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    
+    // 1. Personal & Contact Details (Autoscroll into view)
+    const n = document.getElementById('txtname_individual');
+    if (n) {{
+      n.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      n.value = {name_json};
+      n.dispatchEvent(new Event('input', {{bubbles:true}}));
+    }}
+    const e = document.getElementById('txtemailofcompl_individual');
+    if (e) {{ e.value = {email_json}; e.dispatchEvent(new Event('input', {{bubbles:true}})); }}
+    const pin = document.getElementById('txtPinCode');
+    if (pin) {{ pin.value = {pincode_json}; pin.dispatchEvent(new Event('input', {{bubbles:true}})); pin.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+
+    // 2. Unlock all sections
+    if (window.$) {{
+      $('#dtcomplaintcollapse *').removeAttr('disabled');
+      $('#complaintnature *').removeAttr('disabled');
+      $('#complaintnaturecollpse *').removeAttr('disabled');
+      $('select').removeAttr('disabled');
+      $('input').removeAttr('disabled');
+      $('textarea').removeAttr('disabled');
+    }} else {{
+      document.querySelectorAll('[disabled]').forEach(el => el.removeAttribute('disabled'));
+    }}
+    await sleep(500);
+
+    // 3. Section 3 Cascading Dropdowns with autoscroll
+    if (window.$) {{
+      const d1 = document.getElementById('ddlcomplagainstinsurer_chosen') || document.getElementById('ddlcomplagainstinsurer');
+      if (d1) d1.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      $('#ddlcomplagainstinsurer').val('1').trigger('change').trigger('chosen:updated');
+      await sleep(1500);
+
+      const sComp = document.getElementById('ddlinsurancecomp');
+      const d2 = document.getElementById('ddlinsurancecomp_chosen') || sComp;
+      if (d2) d2.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      if (sComp) {{
+        const norm = {company_json}.toLowerCase().trim();
+        let opt = null;
+        if (norm) {{
+          for (let i = 0; i < sComp.options.length; i++) {{
+            const txt = sComp.options[i].text.toLowerCase();
+            if (txt.includes(norm)) {{
+              opt = sComp.options[i];
+              break;
+            }}
+          }}
+        }}
+        if (!opt && sComp.options.length > 1) opt = sComp.options[1];
+        if (opt) {{ $(sComp).val(opt.value).trigger('change').trigger('chosen:updated'); }}
+      }}
+      await sleep(1500);
+
+      const sPol = document.getElementById('ddlpolicytype');
+      const d3 = document.getElementById('ddlpolicytype_chosen') || sPol;
+      if (d3) d3.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      if (sPol) {{
+        let opt = null;
+        for (let i = 0; i < sPol.options.length; i++) {{
+          if (sPol.options[i].text.toLowerCase().includes('health')) {{ opt = sPol.options[i]; break; }}
+        }}
+        if (!opt && sPol.options.length > 1) opt = sPol.options[1];
+        if (opt) {{ $(sPol).val(opt.value).trigger('change').trigger('chosen:updated'); }}
+      }}
+      await sleep(1500);
+
+      const sCompl = document.getElementById('ddlcomplainttype');
+      const d4 = document.getElementById('ddlcomplainttype_chosen') || sCompl;
+      if (d4) d4.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      if (sCompl) {{
+        let opt = null;
+        for (let i = 0; i < sCompl.options.length; i++) {{
+          if (sCompl.options[i].text.toLowerCase().includes('claim')) {{ opt = sCompl.options[i]; break; }}
+        }}
+        if (!opt && sCompl.options.length > 1) opt = sCompl.options[1];
+        if (opt) {{ $(sCompl).val(opt.value).trigger('change').trigger('chosen:updated'); }}
+      }}
+      await sleep(1500);
+
+      const sDesc = document.getElementById('ddlcomplaintdesctype');
+      const d5 = document.getElementById('ddlcomplaintdesctype_chosen') || sDesc;
+      if (d5) d5.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      if (sDesc) {{
+        const kws = ["delay on the part of tpa to provide cashless", "reduced the quantum", "refuses to extend cashless", "quantum", "cashless"];
+        let opt = null;
+        for (const kw of kws) {{
+          for (let i = 0; i < sDesc.options.length; i++) {{
+            if (sDesc.options[i].text.toLowerCase().includes(kw)) {{ opt = sDesc.options[i]; break; }}
+          }}
+          if (opt) break;
+        }}
+        if (!opt && sDesc.options.length > 1) opt = sDesc.options[1];
+        if (opt) {{ $(sDesc).val(opt.value).trigger('change').trigger('chosen:updated'); }}
+      }}
+      await sleep(1000);
+    }}
+
+    // 4. Section 4 Claim Identifier & Complaint Details
+    const clm = document.getElementById('txtPolicyProposalCertifiateClaimNumber');
+    if (clm) {{
+      clm.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      clm.value = {identifier_json};
+      clm.dispatchEvent(new Event('input', {{bubbles:true}}));
+    }}
+    const rd = document.getElementById('rdClaimNumber');
+    if (rd) {{ rd.checked = true; rd.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+    const txt = document.getElementById('txtcompldetails');
+    if (txt) {{
+      txt.value = {complaint_json};
+      txt.dispatchEvent(new Event('input', {{bubbles:true}}));
+    }}
+    await sleep(500);
+
+    // 5. Fill Mobile safely without triggering blur / OTP
+    const m = document.getElementById('txtmob_individual');
+    if (m) {{
+      m.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      m.value = {mobile_json};
+      m.dispatchEvent(new Event('input', {{bubbles:true}}));
+    }}
+
+    // 6. Highlight all prefilled fields in green
+    ['#txtname_individual','#txtmob_individual','#txtemailofcompl_individual','#txtPinCode','#txtPolicyProposalCertifiateClaimNumber','#txtcompldetails','#ddlcomplagainstinsurer_chosen','#ddlinsurancecomp_chosen','#ddlpolicytype_chosen','#ddlcomplainttype_chosen','#ddlcomplaintdesctype_chosen'].forEach(s => {{
+      const el = document.querySelector(s);
+      if (el) {{ el.style.border = '2px solid #10b981'; el.style.backgroundColor = '#f0fdf4'; el.style.borderRadius = '6px'; }}
+    }});
+
+    window.scrollTo({{ top: 0, behavior: 'smooth' }});
+    alert('✅ InsuriMax: All 11 personal, policy dropdown & grievance fields prefilled in green! OTP auto-trigger is paused to save your daily quota. When ready, click into Mobile & press Tab to generate OTP, solve CAPTCHA, and submit.');
+  }} catch(err) {{
+    alert('Autofill error: ' + err.message);
+  }}
+}})();"""
 
 
 async def run_bima_bharosa_agent(

@@ -99,17 +99,22 @@ def _populate_cascading_dropdowns(page, payload: Dict[str, Any]) -> List[str]:
         page.wait_for_timeout(1800)
 
         # Step 2: Name Of Insurance Company
-        comp_name = payload.get("insurance_company_name", "Star Health")
+        comp_name = payload.get("insurance_company_name") or ""
         page.evaluate("""(name) => {
             const el = document.getElementById("ddlinsurancecomp_chosen") || document.getElementById("ddlinsurancecomp");
             if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
             const s = document.getElementById("ddlinsurancecomp");
             if (!s || !window.$) return;
-            const norm = (name || "").toLowerCase();
+            const norm = (name || "").toLowerCase().trim();
+            const tokens = norm.replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 3 && !['insurance', 'company', 'limited', 'general'].includes(w));
             let target = null;
             for (let i = 0; i < s.options.length; i++) {
                 const txt = s.options[i].text.toLowerCase();
-                if (txt.includes("star health") || txt.includes(norm)) {
+                if (norm && txt.includes(norm)) {
+                    target = s.options[i];
+                    break;
+                }
+                if (tokens.length > 0 && tokens.some(tok => txt.includes(tok))) {
                     target = s.options[i];
                     break;
                 }
@@ -218,8 +223,8 @@ def _fill_bima_bharosa_form(page, payload: Dict[str, Any], inject_ui_banner: boo
     }""")
     page.wait_for_timeout(400)
 
-    if page.locator("#txtname_individual").count() > 0:
-        page.locator("#txtname_individual").fill(payload.get("name") or "Policyholder")
+    if page.locator("#txtname_individual").count() > 0 and payload.get("name"):
+        page.locator("#txtname_individual").fill(payload.get("name"))
         filled.append("name")
 
     if page.locator("#txtemailofcompl_individual").count() > 0 and payload.get("email"):
@@ -266,10 +271,10 @@ def _fill_bima_bharosa_form(page, payload: Dict[str, Any], inject_ui_banner: boo
     page.wait_for_timeout(600)
 
     # 5. Fill Mobile safely without triggering blur / OTP (Autoscroll to mobile field)
-    mobile_val = payload.get("mobile") or "9876543210"
+    mobile_val = payload.get("mobile") or ""
     page.evaluate("""(mob) => {
         const el = document.getElementById('txtmob_individual');
-        if (el) {
+        if (el && mob) {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             el.value = (mob || '').slice(-10);
             el.dispatchEvent(new Event('input', { bubbles: true }));

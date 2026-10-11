@@ -140,6 +140,7 @@ async def get_audit_trail(
     """
     from sqlalchemy import func, select
     from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
+    from app.models.user import User
 
     # Same scope as the insurer's claims: its own insurer only, never hospital-side drafts
     conditions = [Claim.status != ClaimStatus.DRAFT]
@@ -151,9 +152,12 @@ async def get_audit_trail(
     if user_id:
         conditions.append(ClaimStatusHistory.changed_by_id == user_id)
 
-    base = select(ClaimStatusHistory, Claim.claim_number).join(
-        Claim, Claim.id == ClaimStatusHistory.claim_id
-    ).where(*conditions)
+    base = (
+        select(ClaimStatusHistory, Claim.claim_number, User.full_name, User.role)
+        .join(Claim, Claim.id == ClaimStatusHistory.claim_id)
+        .outerjoin(User, User.id == ClaimStatusHistory.changed_by_id)
+        .where(*conditions)
+    )
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     rows = (
         await db.execute(base.order_by(ClaimStatusHistory.created_at.desc()).limit(limit))
@@ -168,9 +172,11 @@ async def get_audit_trail(
                 "from_status": e.from_status.value if e.from_status else None,
                 "to_status": e.to_status.value,
                 "changed_by_id": str(e.changed_by_id) if e.changed_by_id else None,
+                "changed_by_name": user_name,
+                "changed_by_role": user_role.value if user_role else None,
                 "note": e.note,
             }
-            for e, claim_number in rows
+            for e, claim_number, user_name, user_role in rows
         ],
         "total": total,
     }
@@ -187,6 +193,7 @@ async def get_claim_full_trace(
     """
     from app.core.access import require_claim_access
     from app.services import claim_service, adjudication_service
+    from app.models.user import User
 
     await require_claim_access(db, claim_id, current_user)
     claim = await claim_service.get_claim(db, claim_id)
@@ -212,21 +219,40 @@ async def get_claim_full_trace(
             if li.is_overridden
         ]
 
+    user_ids = {h.changed_by_id for h in claim.status_history if h.changed_by_id}
+    users_map = {}
+    if user_ids:
+        u_rows = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        users_map = {u.id: (u.full_name, u.role.value if u.role else None) for u in u_rows}
+
+    status_history_entries = []
+    for h in claim.status_history:
+        uname, urole = users_map.get(h.changed_by_id, (None, None))
+        status_history_entries.append({
+            "from_status": h.from_status.value if h.from_status else None,
+            "to_status": h.to_status.value,
+            "changed_by_id": str(h.changed_by_id) if h.changed_by_id else None,
+            "changed_by_name": uname,
+            "changed_by_role": urole,
+            "note": h.note,
+            "timestamp": h.created_at.isoformat(),
+        })
+
     return {
         "claim_id": str(claim_id),
         "claim_number": claim.claim_number,
-        "status_history": [
-            {
-                "from_status": h.from_status.value if h.from_status else None,
-                "to_status": h.to_status.value,
-                "changed_by_id": str(h.changed_by_id) if h.changed_by_id else None,
-                "note": h.note,
-                "timestamp": h.created_at.isoformat(),
-            }
-            for h in claim.status_history
-        ],
+        "patient_name": claim.patient_name,
+        "hospital_name": claim.hospital_name,
+        "insurer_name": claim.insurer_name,
+        "billed_amount": claim.billed_amount,
+        "approved_amount": claim.approved_amount,
+        "status": claim.status.value,
+        "submitted_at": claim.submitted_at.isoformat() if claim.submitted_at else None,
+        "created_at": claim.created_at.isoformat() if claim.created_at else None,
+        "status_history": status_history_entries,
         "adjudication_overrides": overrides,
         "finalized_at": claim.finalized_at.isoformat() if claim.finalized_at else None,
+        "sla_deadline": claim.sla_deadline.isoformat() if claim.sla_deadline else None,
         "sla_breached": claim.sla_breached,
     }
 

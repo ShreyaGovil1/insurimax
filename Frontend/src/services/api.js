@@ -50,14 +50,19 @@ async function apiRequest(endpoint, options = {}) {
     headers["Authorization"] = `Bearer ${token}`
   }
 
-  if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
+  let body = options.body
+  if (body !== undefined && body !== null && typeof body === "object" && !(body instanceof FormData) && !(body instanceof Blob)) {
+    body = JSON.stringify(body)
+  }
+
+  if (!(options.body instanceof FormData) && !(body instanceof FormData) && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json"
   }
 
   const url = `${BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
 
   try {
-    const res = await fetch(url, { ...options, headers })
+    const res = await fetch(url, { ...options, headers, body })
 
     if (!res.ok) {
       let errorData = null
@@ -517,6 +522,10 @@ export const api = {
       })
     },
 
+    async getRecentClaims(limit = 4) {
+      return await apiRequest(`/patient/claims/recent?limit=${limit}`)
+    },
+
     async getBimaBharosaPayload(claimId, issueType = "discharge_delay") {
       return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-payload?issue_type=${encodeURIComponent(issueType)}`)
     },
@@ -524,6 +533,34 @@ export const api = {
     async triggerBimaBharosaAutofill(claimId, { issueType = "discharge_delay", headless = false } = {}) {
       return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-autofill?issue_type=${encodeURIComponent(issueType)}&headless=${headless}`, {
         method: "POST",
+      })
+    },
+
+    async lookupEscalation({ query, patientName, phone, hospitalName, issueType = "discharge_delay", claimId } = {}) {
+      return await apiRequest(`/patient/escalation/lookup`, {
+        method: "POST",
+        body: JSON.stringify({
+          query,
+          patient_name: patientName,
+          phone,
+          hospital_name: hospitalName,
+          issue_type: issueType,
+          claim_id: claimId,
+        }),
+      })
+    },
+
+    async triggerEscalationAutofill({ query, patientName, phone, issueType = "discharge_delay", claimId, headless = false } = {}) {
+      return await apiRequest(`/patient/escalation/autofill`, {
+        method: "POST",
+        body: JSON.stringify({
+          query,
+          patient_name: patientName,
+          phone,
+          issue_type: issueType,
+          claim_id: claimId,
+          headless,
+        }),
       })
     },
   },
