@@ -1,7 +1,7 @@
 """
 Bima Bharosa Grievance Preparation Service
-Automates preparation, text sanitization, statutory legal citation mapping,
-and field normalization for the IRDAI Bima Bharosa Grievance Portal
+Prepares a sanitized, citation-mapped complaint packet (and a printable PDF of it)
+that the patient files manually on the IRDAI Bima Bharosa Grievance Portal
 (https://bimabharosa.irdai.gov.in/RegComplaint/RegisterComplaint).
 """
 
@@ -31,13 +31,15 @@ BANNED_CHARS_REGEX = re.compile(r"[~!@#$^&;\"'\[\]]")
 class BimaBharosaComplaintPayload(BaseModel):
     # 1. Personal Details
     name: str = Field(..., max_length=300, description="Full Name of Complainant")
-    mobile: str = Field(..., min_length=10, max_length=10, description="10-digit mobile number")
+    # Contact/address fields are not stored on the claim, so they may be blank
+    # and are completed by the patient before filing on the portal.
+    mobile: str = Field("", max_length=10, description="10-digit mobile number")
     email: Optional[str] = Field(None, description="Email for grievance tracking")
 
     # 2. Address Details
-    pincode: str = Field(..., min_length=6, max_length=6, description="6-digit Postal PIN Code")
-    district: str = Field(..., description="District auto-resolved from PIN code")
-    state: str = Field(..., description="State auto-resolved from PIN code")
+    pincode: str = Field("", max_length=6, description="6-digit Postal PIN Code")
+    district: str = Field("", description="District resolved from PIN code on the portal")
+    state: str = Field("", description="State resolved from PIN code on the portal")
 
     # 3. Insurance Company And Policy Details
     complaint_against: str = Field(default="Insurer", description="Entity type: Insurer or Intermediary")
@@ -93,7 +95,7 @@ def generate_bima_bharosa_payload(
     clean_mobile = re.sub(r"\D", "", raw_mobile)
     mobile = clean_mobile[-10:] if len(clean_mobile) >= 10 else clean_mobile
     email = complainant.get("email") or claim.get("patient_email") or ""
-    pincode = complainant.get("pincode") or claim.get("pincode") or ""
+    pincode = re.sub(r"\D", "", complainant.get("pincode") or claim.get("pincode") or "")[:6]
     district = complainant.get("district") or claim.get("district") or ""
     state = complainant.get("state") or claim.get("state") or ""
 
@@ -169,182 +171,155 @@ def generate_bima_bharosa_payload(
     )
 
 
-def generate_bima_bharosa_script(payload: Dict[str, Any]) -> str:
+BIMA_BHAROSA_PORTAL_URL = "https://bimabharosa.irdai.gov.in/RegComplaint/RegisterComplaint"
+
+
+def build_bima_bharosa_pdf(payload: Dict[str, Any], claim: Dict[str, Any]) -> bytes:
     """
-    Generates a self-contained 1-click autofill script that works via Bookmarklet
-    or browser Developer Console with autoscroll and green field highlighting.
+    Render the prefilled complaint packet as a printable PDF the patient keeps
+    beside them while filling the Bima Bharosa form manually. Fields follow the
+    portal's section order; blanks are left as write-in lines.
     """
-    import json
+    import pymupdf as fitz
 
-    name_json = json.dumps(payload.get("name") or "")
-    email_json = json.dumps(payload.get("email") or "")
-    pincode_json = json.dumps(payload.get("pincode") or "")
-    company_json = json.dumps(payload.get("insurance_company_name") or "")
-    identifier_json = json.dumps(payload.get("identifier_number") or "")
-    complaint_json = json.dumps((payload.get("complaint_details") or "")[:400])
-    raw_mobile = payload.get("mobile") or ""
-    clean_mob = re.sub(r"\D", "", raw_mobile)
-    mobile_val = clean_mob[-10:] if len(clean_mob) >= 10 else clean_mob
-    mobile_json = json.dumps(mobile_val)
+    def val(v: Any) -> str:
+        return str(v).strip() if v not in (None, "") else ""
 
-    return f"""(async function(){{
-  try {{
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-    
-    // 1. Personal & Contact Details (Autoscroll into view)
-    const n = document.getElementById('txtname_individual');
-    if (n) {{
-      n.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      n.value = {name_json};
-      n.dispatchEvent(new Event('input', {{bubbles:true}}));
-    }}
-    const e = document.getElementById('txtemailofcompl_individual');
-    if (e) {{ e.value = {email_json}; e.dispatchEvent(new Event('input', {{bubbles:true}})); }}
-    const pin = document.getElementById('txtPinCode');
-    if (pin) {{ pin.value = {pincode_json}; pin.dispatchEvent(new Event('input', {{bubbles:true}})); pin.dispatchEvent(new Event('change', {{bubbles:true}})); }}
+    def inr(v: Any) -> str:
+        return f"INR {float(v):,.0f}" if v not in (None, "") else ""
 
-    // 2. Unlock all sections
-    if (window.$) {{
-      $('#dtcomplaintcollapse *').removeAttr('disabled');
-      $('#complaintnature *').removeAttr('disabled');
-      $('#complaintnaturecollpse *').removeAttr('disabled');
-      $('select').removeAttr('disabled');
-      $('input').removeAttr('disabled');
-      $('textarea').removeAttr('disabled');
-    }} else {{
-      document.querySelectorAll('[disabled]').forEach(el => el.removeAttribute('disabled'));
-    }}
-    await sleep(500);
+    sections = [
+        ("1. Personal details", [
+            ("User type", "Individual"),
+            ("Name", val(payload.get("name"))),
+            ("Mobile number", val(payload.get("mobile"))),
+            ("Email", val(payload.get("email"))),
+        ]),
+        ("2. Address details", [
+            ("PIN code", val(payload.get("pincode"))),
+            ("District", val(payload.get("district"))),
+            ("State", val(payload.get("state"))),
+        ]),
+        ("3. Insurance company and policy details", [
+            ("Complaint against", val(payload.get("complaint_against"))),
+            ("Insurance company", val(payload.get("insurance_company_name"))),
+            ("Policy type", val(payload.get("policy_type"))),
+            ("Complaint type", val(payload.get("complaint_type"))),
+            ("Complaint description type", val(payload.get("complaint_description_type"))),
+        ]),
+        ("4. Policy / claim identification", [
+            ("Identifier type", val(payload.get("identifier_type"))),
+            ("Claim number", val(payload.get("identifier_number"))),
+            ("Policy number", val(claim.get("policy_number"))),
+        ]),
+        ("Claim reference (from hospital records)", [
+            ("Hospital", val(claim.get("hospital_name"))),
+            ("Billed amount", inr(claim.get("billed_amount"))),
+            ("Approved amount", inr(claim.get("approved_amount"))),
+            ("Deducted amount", inr(claim.get("deducted_amount"))),
+            ("Claim status", val(claim.get("status")).replace("_", " ").title()),
+        ]),
+    ]
 
-    // 3. Section 3 Cascading Dropdowns with autoscroll
-    if (window.$) {{
-      const d1 = document.getElementById('ddlcomplagainstinsurer_chosen') || document.getElementById('ddlcomplagainstinsurer');
-      if (d1) d1.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      $('#ddlcomplagainstinsurer').val('1').trigger('change').trigger('chosen:updated');
-      await sleep(1500);
+    doc = fitz.open()
+    page_w, page_h = fitz.paper_size("a4")
+    margin = 48
+    content_w = page_w - 2 * margin
+    label_w = 170
+    ink = (0.1, 0.12, 0.14)
+    muted = (0.42, 0.45, 0.48)
+    accent = (0.04, 0.33, 0.36)
+    line = (0.85, 0.86, 0.87)
 
-      const sComp = document.getElementById('ddlinsurancecomp');
-      const d2 = document.getElementById('ddlinsurancecomp_chosen') || sComp;
-      if (d2) d2.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      if (sComp) {{
-        const norm = {company_json}.toLowerCase().trim();
-        let opt = null;
-        if (norm) {{
-          for (let i = 0; i < sComp.options.length; i++) {{
-            const txt = sComp.options[i].text.toLowerCase();
-            if (txt.includes(norm)) {{
-              opt = sComp.options[i];
-              break;
-            }}
-          }}
-        }}
-        if (!opt && sComp.options.length > 1) opt = sComp.options[1];
-        if (opt) {{ $(sComp).val(opt.value).trigger('change').trigger('chosen:updated'); }}
-      }}
-      await sleep(1500);
+    page = doc.new_page(width=page_w, height=page_h)
+    y = margin
 
-      const sPol = document.getElementById('ddlpolicytype');
-      const d3 = document.getElementById('ddlpolicytype_chosen') || sPol;
-      if (d3) d3.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      if (sPol) {{
-        let opt = null;
-        for (let i = 0; i < sPol.options.length; i++) {{
-          if (sPol.options[i].text.toLowerCase().includes('health')) {{ opt = sPol.options[i]; break; }}
-        }}
-        if (!opt && sPol.options.length > 1) opt = sPol.options[1];
-        if (opt) {{ $(sPol).val(opt.value).trigger('change').trigger('chosen:updated'); }}
-      }}
-      await sleep(1500);
+    def ensure(space: float) -> None:
+        nonlocal page, y
+        if y + space > page_h - margin:
+            page = doc.new_page(width=page_w, height=page_h)
+            y = margin
 
-      const sCompl = document.getElementById('ddlcomplainttype');
-      const d4 = document.getElementById('ddlcomplainttype_chosen') || sCompl;
-      if (d4) d4.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      if (sCompl) {{
-        let opt = null;
-        for (let i = 0; i < sCompl.options.length; i++) {{
-          if (sCompl.options[i].text.toLowerCase().includes('claim')) {{ opt = sCompl.options[i]; break; }}
-        }}
-        if (!opt && sCompl.options.length > 1) opt = sCompl.options[1];
-        if (opt) {{ $(sCompl).val(opt.value).trigger('change').trigger('chosen:updated'); }}
-      }}
-      await sleep(1500);
+    def wrap(text: str, width: float, size: float, font: str) -> List[str]:
+        lines: List[str] = []
+        for para in (text or "").split("\n"):
+            current = ""
+            for word in para.split():
+                trial = f"{current} {word}".strip()
+                if current and fitz.get_text_length(trial, fontname=font, fontsize=size) > width:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = trial
+            lines.append(current)
+        return lines or [""]
 
-      const sDesc = document.getElementById('ddlcomplaintdesctype');
-      const d5 = document.getElementById('ddlcomplaintdesctype_chosen') || sDesc;
-      if (d5) d5.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      if (sDesc) {{
-        const kws = ["delay on the part of tpa to provide cashless", "reduced the quantum", "refuses to extend cashless", "quantum", "cashless"];
-        let opt = null;
-        for (const kw of kws) {{
-          for (let i = 0; i < sDesc.options.length; i++) {{
-            if (sDesc.options[i].text.toLowerCase().includes(kw)) {{ opt = sDesc.options[i]; break; }}
-          }}
-          if (opt) break;
-        }}
-        if (!opt && sDesc.options.length > 1) opt = sDesc.options[1];
-        if (opt) {{ $(sDesc).val(opt.value).trigger('change').trigger('chosen:updated'); }}
-      }}
-      await sleep(1000);
-    }}
+    def write(x: float, top: float, text: str, width: float, size: float, font: str = "helv", color=ink) -> float:
+        """Draw wrapped text with its first baseline below `top`; returns the block height."""
+        lead = size * 1.4
+        lines = wrap(text, width, size, font)
+        for i, ln in enumerate(lines):
+            page.insert_text((x, top + size + i * lead), ln, fontname=font, fontsize=size, color=color)
+        return len(lines) * lead
 
-    // 4. Section 4 Claim Identifier & Complaint Details
-    const clm = document.getElementById('txtPolicyProposalCertifiateClaimNumber');
-    if (clm) {{
-      clm.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      clm.value = {identifier_json};
-      clm.dispatchEvent(new Event('input', {{bubbles:true}}));
-    }}
-    const rd = document.getElementById('rdClaimNumber');
-    if (rd) {{ rd.checked = true; rd.dispatchEvent(new Event('change', {{bubbles:true}})); }}
-    const txt = document.getElementById('txtcompldetails');
-    if (txt) {{
-      txt.value = {complaint_json};
-      txt.dispatchEvent(new Event('input', {{bubbles:true}}));
-    }}
-    await sleep(500);
+    def text_height(text: str, width: float, size: float, font: str = "helv") -> float:
+        return len(wrap(text, width, size, font)) * size * 1.4
 
-    // 5. Fill Mobile safely without triggering blur / OTP
-    const m = document.getElementById('txtmob_individual');
-    if (m) {{
-      m.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-      m.value = {mobile_json};
-      m.dispatchEvent(new Event('input', {{bubbles:true}}));
-    }}
+    page.insert_text((margin, y + 14), "IRDAI Bima Bharosa complaint - prefilled values", fontname="hebo", fontsize=15, color=ink)
+    y += 24
+    page.insert_text((margin, y + 10), "For your reference only. Copy these values into the form at:", fontname="helv", fontsize=9, color=muted)
+    y += 14
+    page.insert_text((margin, y + 10), BIMA_BHAROSA_PORTAL_URL, fontname="helv", fontsize=9, color=accent)
+    y += 18
+    page.draw_line((margin, y), (page_w - margin, y), color=line, width=0.8)
+    y += 14
 
-    // 6. Highlight all prefilled fields in green
-    ['#txtname_individual','#txtmob_individual','#txtemailofcompl_individual','#txtPinCode','#txtPolicyProposalCertifiateClaimNumber','#txtcompldetails','#ddlcomplagainstinsurer_chosen','#ddlinsurancecomp_chosen','#ddlpolicytype_chosen','#ddlcomplainttype_chosen','#ddlcomplaintdesctype_chosen'].forEach(s => {{
-      const el = document.querySelector(s);
-      if (el) {{ el.style.border = '2px solid #10b981'; el.style.backgroundColor = '#f0fdf4'; el.style.borderRadius = '6px'; }}
-    }});
+    for title, rows in sections:
+        ensure(40)
+        page.insert_text((margin, y + 11), title, fontname="hebo", fontsize=11, color=accent)
+        y += 20
+        for label, value in rows:
+            shown = value or "(fill in on the portal)"
+            font = "hebo" if value else "helv"
+            h = text_height(shown, content_w - label_w, 10, font)
+            ensure(h + 6)
+            write(margin, y, label, label_w - 8, 9.5, color=muted)
+            write(margin + label_w, y, shown, content_w - label_w, 10, font, ink if value else muted)
+            y += h + 6
+        y += 8
 
-    window.scrollTo({{ top: 0, behavior: 'smooth' }});
-    alert('✅ InsuriMax: All 11 personal, policy dropdown & grievance fields prefilled in green! OTP auto-trigger is paused to save your daily quota. When ready, click into Mobile & press Tab to generate OTP, solve CAPTCHA, and submit.');
-  }} catch(err) {{
-    alert('Autofill error: ' + err.message);
-  }}
-}})();"""
+    details = val(payload.get("complaint_details"))
+    ensure(60)
+    page.insert_text((margin, y + 11), f"5. Complaint details ({len(details)}/400 characters)", fontname="hebo", fontsize=11, color=accent)
+    y += 20
+    h = text_height(details, content_w - 20, 10) + 16
+    ensure(h)
+    page.draw_rect(fitz.Rect(margin, y, page_w - margin, y + h), color=line, fill=(0.97, 0.97, 0.96), width=0.8)
+    write(margin + 10, y + 6, details, content_w - 20, 10)
+    y += h + 14
 
+    citations = payload.get("statutory_citations") or []
+    if citations:
+        ensure(20 + 16 * len(citations))
+        page.insert_text((margin, y + 11), "Regulations cited", fontname="hebo", fontsize=11, color=accent)
+        y += 20
+        for c in citations:
+            ensure(text_height(f"- {c}", content_w, 9.5) + 4)
+            y += write(margin, y, f"- {c}", content_w, 9.5) + 2
+        y += 10
 
-async def run_bima_bharosa_agent(
-    claim: Dict[str, Any],
-    issue_type: str = "discharge_delay",
-    complainant_override: Optional[Dict[str, str]] = None,
-    headless: bool = False,
-) -> Dict[str, Any]:
-    """
-    Executes the autonomous Bima Bharosa Browser Agent:
-    1. Prepares and sanitizes the complaint payload
-    2. Launches Playwright browser automation to Bima Bharosa
-    3. Populates all fields automatically with anti-detection stealth
-    """
-    from app.services.bima_bharosa_browser import autofill_bima_bharosa_portal
+    steps = [
+        "Open the portal link above and choose 'Register Complaint' as an individual.",
+        "Copy each value from this sheet into the matching field. Fill any blank fields yourself.",
+        "Enter the OTP sent to your mobile, type the CAPTCHA, and submit. Keep the complaint number you receive.",
+    ]
+    ensure(20 + 18 * len(steps))
+    page.insert_text((margin, y + 11), "How to file", fontname="hebo", fontsize=11, color=accent)
+    y += 20
+    for i, st in enumerate(steps, 1):
+        ensure(text_height(f"{i}. {st}", content_w, 9.5) + 4)
+        y += write(margin, y, f"{i}. {st}", content_w, 9.5) + 3
 
-    payload = generate_bima_bharosa_payload(claim, issue_type, complainant_override)
-    payload_dict = payload.model_dump()
-    payload_dict["issue_type"] = issue_type
-
-    agent_result = await autofill_bima_bharosa_portal(payload_dict, headless=headless)
-    return {
-        "payload": payload_dict,
-        "agent_result": agent_result,
-    }
+    data = doc.tobytes()
+    doc.close()
+    return data

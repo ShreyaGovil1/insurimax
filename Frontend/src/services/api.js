@@ -91,10 +91,14 @@ async function apiRequest(endpoint, options = {}) {
 }
 
 // Authenticated binary fetch (e.g. rendered PDF pages): returns an object URL the caller must revoke.
-async function apiBlobUrl(endpoint) {
+async function apiBlobUrl(endpoint, { method = "GET", body } = {}) {
   const token = getAccessToken()
+  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  if (body !== undefined) headers["Content-Type"] = "application/json"
   const res = await fetch(`${BASE_URL}${endpoint}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
     let detail = res.statusText
@@ -530,9 +534,11 @@ export const api = {
       return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-payload?issue_type=${encodeURIComponent(issueType)}`)
     },
 
-    async triggerBimaBharosaAutofill(claimId, { issueType = "discharge_delay", headless = false } = {}) {
-      return await apiRequest(`/patient/claims/${claimId}/bima-bharosa-autofill?issue_type=${encodeURIComponent(issueType)}&headless=${headless}`, {
+    // Prefilled complaint values as a PDF for filing on Bima Bharosa manually; returns an object URL to revoke.
+    async downloadBimaBharosaPdf(claimId, { issueType = "discharge_delay", complainant } = {}) {
+      return await apiBlobUrl(`/patient/claims/${claimId}/bima-bharosa-form.pdf?issue_type=${encodeURIComponent(issueType)}`, {
         method: "POST",
+        body: complainant || {},
       })
     },
 
@@ -546,20 +552,6 @@ export const api = {
           hospital_name: hospitalName,
           issue_type: issueType,
           claim_id: claimId,
-        }),
-      })
-    },
-
-    async triggerEscalationAutofill({ query, patientName, phone, issueType = "discharge_delay", claimId, headless = false } = {}) {
-      return await apiRequest(`/patient/escalation/autofill`, {
-        method: "POST",
-        body: JSON.stringify({
-          query,
-          patient_name: patientName,
-          phone,
-          issue_type: issueType,
-          claim_id: claimId,
-          headless,
         }),
       })
     },

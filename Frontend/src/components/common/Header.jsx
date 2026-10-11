@@ -161,19 +161,6 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
           )}
 
           {user && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => navigate("/patient")}
-              className="hidden lg:inline-flex gap-1.5 border-peacock-400/30 bg-white/5 text-peacock-100 hover:border-peacock-300 hover:bg-white/10 hover:text-white"
-              title="Track patient claims & IRDAI escalation"
-            >
-              <SearchCheck className="h-3.5 w-3.5 text-marigold-400" />
-              <span>Track claim</span>
-            </Button>
-          )}
-
-          {user && (
             <div className="relative" ref={menuRef}>
               <button
                 type="button"

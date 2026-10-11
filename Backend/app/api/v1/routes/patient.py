@@ -4,13 +4,16 @@ Patient-facing claim status routes (minimal PII exposure, public token-based).
 GET    /patient/claims/recent
 GET    /patient/claims/{claimId}/status
 POST   /patient/claims/{claimId}/notifications/subscribe
+GET    /patient/claims/{claimId}/bima-bharosa-payload
+POST   /patient/claims/{claimId}/bima-bharosa-form.pdf
+POST   /patient/escalation/lookup
 """
 import logging
 import re
 import uuid
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
@@ -20,14 +23,53 @@ from app.core.deps import DBSession
 from app.models.claim import Claim, ClaimStatus
 from app.services import claim_service
 from app.services.bima_bharosa_service import (
+    BIMA_BHAROSA_PORTAL_URL,
+    build_bima_bharosa_pdf,
     generate_bima_bharosa_payload,
-    generate_bima_bharosa_script,
-    run_bima_bharosa_agent,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/patient", tags=["Patient Status"])
+
+
+async def _resolve_claim(db: DBSession, claim_id: str) -> Claim:
+    """Find a non-draft claim by UUID, or by claim number / patient name match."""
+    claim = None
+    try:
+        claim = await claim_service.get_claim(db, uuid.UUID(claim_id))
+    except (ValueError, TypeError):
+        pass
+
+    if not claim:
+        stmt = (
+            select(Claim)
+            .where(Claim.status != ClaimStatus.DRAFT)
+            .where(or_(Claim.claim_number.ilike(f"%{claim_id}%"), Claim.patient_name.ilike(f"%{claim_id}%")))
+            .order_by(Claim.created_at.desc())
+            .limit(1)
+        )
+        res = await db.execute(stmt)
+        claim = res.scalar_one_or_none()
+
+    if not claim or claim.status == ClaimStatus.DRAFT:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return claim
+
+
+def _claim_dict(claim: Claim) -> dict:
+    return {
+        "claim_number": claim.claim_number,
+        "policy_number": claim.policy_number,
+        "patient_name": claim.patient_name,
+        "patient_phone": claim.patient_phone,
+        "hospital_name": claim.hospital_name,
+        "insurer_name": claim.insurer_name,
+        "billed_amount": claim.billed_amount,
+        "approved_amount": claim.approved_amount,
+        "deducted_amount": claim.deducted_amount,
+        "status": claim.status.value,
+    }
 
 
 @router.get("/claims/recent")
@@ -75,27 +117,7 @@ async def get_patient_claim_status(
     Returns only the status and approved amount; no names, policy numbers, or adjudication details.
     In production, protect with a short-lived one-time token sent via SMS/email.
     """
-    from sqlalchemy import select, or_
-
-    claim = None
-    try:
-        c_uuid = uuid.UUID(claim_id)
-        claim = await claim_service.get_claim(db, c_uuid)
-    except (ValueError, TypeError):
-        pass
-
-    if not claim:
-        stmt = (
-            select(Claim)
-            .where(or_(Claim.claim_number.ilike(f"%{claim_id}%"), Claim.patient_name.ilike(f"%{claim_id}%")))
-            .order_by(Claim.created_at.desc())
-            .limit(1)
-        )
-        res = await db.execute(stmt)
-        claim = res.scalar_one_or_none()
-
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    claim = await _resolve_claim(db, claim_id)
 
     # Map internal statuses to patient-friendly messages
     status_messages = {
@@ -136,33 +158,13 @@ async def subscribe_to_notifications(
     Opt in to SMS/email status updates for a claim.
     In production, integrate with Cloud Tasks + SendGrid / SMS gateway.
     """
-    from sqlalchemy import select, or_
-
     if not email and not phone:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="At least one of email or phone is required",
         )
 
-    claim = None
-    try:
-        c_uuid = uuid.UUID(claim_id)
-        claim = await claim_service.get_claim(db, c_uuid)
-    except (ValueError, TypeError):
-        pass
-
-    if not claim:
-        stmt = (
-            select(Claim)
-            .where(or_(Claim.claim_number.ilike(f"%{claim_id}%"), Claim.patient_name.ilike(f"%{claim_id}%")))
-            .order_by(Claim.created_at.desc())
-            .limit(1)
-        )
-        res = await db.execute(stmt)
-        claim = res.scalar_one_or_none()
-
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    claim = await _resolve_claim(db, claim_id)
 
     return {
         "message": "Notification subscription created",
@@ -181,110 +183,46 @@ async def get_bima_bharosa_payload_endpoint(
     issue_type: str = "discharge_delay",
 ):
     """
-    Generate an IRDAI Bima Bharosa complaint autofill payload.
-    Maps claim data into the exact 5-section schema required by Bima Bharosa.
+    Build the IRDAI Bima Bharosa complaint values for a claim, in the portal's
+    5-section order, for the patient to copy into the form manually.
     """
-    from app.services.bima_bharosa_service import generate_bima_bharosa_payload
-    from sqlalchemy import select, or_
-
-    claim = None
-    try:
-        c_uuid = uuid.UUID(claim_id)
-        claim = await claim_service.get_claim(db, c_uuid)
-    except (ValueError, TypeError):
-        pass
-
-    if not claim:
-        stmt = (
-            select(Claim)
-            .where(or_(Claim.claim_number.ilike(f"%{claim_id}%"), Claim.patient_name.ilike(f"%{claim_id}%")))
-            .order_by(Claim.created_at.desc())
-            .limit(1)
-        )
-        res = await db.execute(stmt)
-        claim = res.scalar_one_or_none()
-
-    if not claim:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
-
-    claim_dict = {
-        "claim_number": claim.claim_number,
-        "policy_number": claim.policy_number,
-        "patient_name": claim.patient_name,
-        "patient_phone": claim.patient_phone,
-        "hospital_name": claim.hospital_name,
-        "insurer_name": claim.insurer_name,
-        "billed_amount": claim.billed_amount,
-        "approved_amount": claim.approved_amount,
-        "deducted_amount": claim.deducted_amount,
-        "status": claim.status.value,
-    }
-
-    payload = generate_bima_bharosa_payload(claim_dict, issue_type=issue_type)
+    claim = await _resolve_claim(db, claim_id)
+    payload = generate_bima_bharosa_payload(_claim_dict(claim), issue_type=issue_type)
     return payload.model_dump()
 
 
-@router.post("/claims/{claim_id}/bima-bharosa-autofill")
-async def trigger_bima_bharosa_autofill_agent(
+class ComplainantDetails(BaseModel):
+    """Contact/address values the patient adds before downloading; not stored on the claim."""
+    name: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    pincode: str | None = None
+    district: str | None = None
+    state: str | None = None
+
+
+@router.post("/claims/{claim_id}/bima-bharosa-form.pdf")
+async def download_bima_bharosa_form_pdf(
     claim_id: str,
     db: DBSession,
     issue_type: str = "discharge_delay",
-    headless: bool = False,
+    complainant: ComplainantDetails | None = None,
 ):
     """
-    Launch the autonomous browser agent to navigate to Bima Bharosa
-    and fill out the grievance form for the specified claim.
+    Download the prefilled Bima Bharosa complaint values as a PDF the patient
+    keeps beside them while filling the government form manually.
     """
-    from app.services.bima_bharosa_service import run_bima_bharosa_agent
-    from sqlalchemy import select, or_
-
-    import traceback, logging
-    logger = logging.getLogger(__name__)
-
-    try:
-        claim = None
-        try:
-            c_uuid = uuid.UUID(claim_id)
-            claim = await claim_service.get_claim(db, c_uuid)
-        except (ValueError, TypeError):
-            pass
-
-        if not claim:
-            stmt = (
-                select(Claim)
-                .where(or_(Claim.claim_number.ilike(f"%{claim_id}%"), Claim.patient_name.ilike(f"%{claim_id}%")))
-                .order_by(Claim.created_at.desc())
-                .limit(1)
-            )
-            res = await db.execute(stmt)
-            claim = res.scalar_one_or_none()
-
-        if not claim:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
-
-        claim_dict = {
-            "claim_number": claim.claim_number,
-            "policy_number": claim.policy_number,
-            "patient_name": claim.patient_name,
-            "patient_phone": claim.patient_phone,
-            "hospital_name": claim.hospital_name,
-            "insurer_name": claim.insurer_name,
-            "billed_amount": claim.billed_amount,
-            "approved_amount": claim.approved_amount,
-            "deducted_amount": claim.deducted_amount,
-            "status": claim.status.value,
-        }
-
-        result = await run_bima_bharosa_agent(claim_dict, issue_type=issue_type, headless=headless)
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Error in trigger_bima_bharosa_autofill_agent: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Browser automation agent error: {str(exc)}",
-        )
+    claim = await _resolve_claim(db, claim_id)
+    claim_dict = _claim_dict(claim)
+    override = {k: v.strip() for k, v in (complainant.model_dump() if complainant else {}).items() if v and v.strip()}
+    payload = generate_bima_bharosa_payload(claim_dict, issue_type=issue_type, complainant_override=override)
+    pdf = build_bima_bharosa_pdf(payload.model_dump(), claim_dict)
+    filename = f"bima-bharosa-{re.sub(r'[^A-Za-z0-9-]', '', claim.claim_number) or 'complaint'}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,8 +237,6 @@ class PatientEscalationLookupRequest(BaseModel):
     hospital_name: str | None = None
     issue_type: str = "discharge_delay"
     claim_id: str | None = None
-    trigger_autofill: bool = False
-    headless: bool = False
 
 
 async def _execute_patient_escalation_lookup(
@@ -311,8 +247,6 @@ async def _execute_patient_escalation_lookup(
     hospital_name: str | None = None,
     issue_type: str = "discharge_delay",
     claim_id: str | None = None,
-    trigger_autofill: bool = False,
-    headless: bool = False,
 ) -> dict:
     stmt = (
         select(Claim)
@@ -367,7 +301,7 @@ async def _execute_patient_escalation_lookup(
             detail="Please provide a patient name, phone number, or search query.",
         )
 
-    stmt = stmt.where(or_(*conditions))
+    stmt = stmt.where(or_(*conditions)).where(Claim.status != ClaimStatus.DRAFT)
 
     if hospital_name and hospital_name.strip():
         stmt = stmt.where(Claim.hospital_name.ilike(f"%{hospital_name.strip()}%"))
@@ -423,27 +357,8 @@ async def _execute_patient_escalation_lookup(
         else:
             effective_issue = "discharge_delay"
 
-    claim_dict = {
-        "claim_number": primary_claim.claim_number,
-        "policy_number": primary_claim.policy_number,
-        "patient_name": primary_claim.patient_name,
-        "patient_phone": primary_claim.patient_phone,
-        "hospital_name": primary_claim.hospital_name,
-        "insurer_name": primary_claim.insurer_name,
-        "billed_amount": primary_claim.billed_amount,
-        "approved_amount": primary_claim.approved_amount,
-        "deducted_amount": primary_claim.deducted_amount,
-        "status": primary_claim.status.value,
-    }
-
-    payload = generate_bima_bharosa_payload(claim_dict, issue_type=effective_issue)
+    payload = generate_bima_bharosa_payload(_claim_dict(primary_claim), issue_type=effective_issue)
     payload_data = payload.model_dump()
-    autofill_script = generate_bima_bharosa_script(payload_data)
-
-    agent_result = None
-    if trigger_autofill:
-        agent_out = await run_bima_bharosa_agent(claim_dict, issue_type=effective_issue, headless=headless)
-        agent_result = agent_out.get("agent_result")
 
     return {
         "status": "success",
@@ -472,14 +387,12 @@ async def _execute_patient_escalation_lookup(
         },
         "escalation": {
             "issue_type": effective_issue,
-            "portal_url": "https://bimabharosa.irdai.gov.in/RegComplaint/RegisterComplaint",
+            "portal_url": BIMA_BHAROSA_PORTAL_URL,
             "ombudsman_url": "https://www.cioins.co.in/",
             "bima_bharosa_payload": payload_data,
-            "autofill_script": autofill_script,
             "statutory_citations": payload.statutory_citations or [],
             "complaint_preview": payload.complaint_details,
         },
-        "agent_result": agent_result,
     }
 
 
@@ -490,8 +403,8 @@ async def patient_escalation_lookup(
 ):
     """
     Look up all hospital claim information for a patient by name, phone number,
-    or general identifier, and automatically generate an IRDAI Bima Bharosa
-    grievance package and 1-click browser form autofill script.
+    or general identifier, and prepare the IRDAI Bima Bharosa complaint values
+    for the patient to file manually.
     """
     return await _execute_patient_escalation_lookup(
         db=db,
@@ -501,8 +414,6 @@ async def patient_escalation_lookup(
         hospital_name=req.hospital_name,
         issue_type=req.issue_type,
         claim_id=req.claim_id,
-        trigger_autofill=req.trigger_autofill,
-        headless=req.headless,
     )
 
 
@@ -515,8 +426,6 @@ async def patient_escalation_lookup_get(
     hospital_name: str | None = None,
     issue_type: str = "discharge_delay",
     claim_id: str | None = None,
-    trigger_autofill: bool = False,
-    headless: bool = False,
 ):
     """
     GET variant for quick browser testing and direct URL links.
@@ -529,32 +438,4 @@ async def patient_escalation_lookup_get(
         hospital_name=hospital_name,
         issue_type=issue_type,
         claim_id=claim_id,
-        trigger_autofill=trigger_autofill,
-        headless=headless,
     )
-
-
-@router.post("/escalation/autofill")
-async def patient_escalation_autofill(
-    req: PatientEscalationLookupRequest,
-    db: DBSession,
-):
-    """
-    Directly trigger the autonomous browser agent to open the IRDAI Bima Bharosa
-    portal and fill out the grievance form for the matched patient hospital claim.
-    """
-    return await _execute_patient_escalation_lookup(
-        db=db,
-        patient_name=req.patient_name,
-        phone=req.phone,
-        query_str=req.query,
-        hospital_name=req.hospital_name,
-        issue_type=req.issue_type,
-        claim_id=req.claim_id,
-        trigger_autofill=True,
-        headless=req.headless,
-    )
-
-
-
-
