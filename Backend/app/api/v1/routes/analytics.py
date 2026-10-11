@@ -33,6 +33,7 @@ from app.schemas.analytics import (
     WebhookSubscriptionCreate,
     WebhookSubscriptionRead,
 )
+from app.core.access import insurer_scope
 from app.services import analytics_service
 
 router = APIRouter(tags=["Analytics & Compliance"])
@@ -50,26 +51,26 @@ async def get_hospital_billing_patterns(
     Phase 6 pattern detection: item-level override frequencies per hospital.
     'This hospital has had 3 prior overrides on this item type.'
     """
-    patterns = await analytics_service.get_hospital_billing_patterns(db, hospital_org_id)
+    patterns = await analytics_service.get_hospital_billing_patterns(
+        db, hospital_org_id, insurer_org_id=await insurer_scope(db, current_user)
+    )
     return patterns
 
 
 @router.get("/analytics/anomalies")
 async def get_anomalies(
+    db: DBSession,
     current_user: AdjusterOrAbove,
     severity: str | None = Query(None, description="low | medium | high"),
     limit: int = Query(50, ge=1, le=200),
 ):
-    """
-    Cross-claim anomaly feed.
-    In production, this would be populated by a background Cloud Scheduler job
-    running pattern analysis across all claims. Currently returns a placeholder.
-    """
-    return {
-        "anomalies": [],
-        "total": 0,
-        "note": "Anomaly detection runs as a background job. No anomalies flagged yet.",
-    }
+    """Cross-claim anomaly feed, computed live over the caller's insurer scope."""
+    anomalies = await analytics_service.get_anomalies(
+        db, insurer_org_id=await insurer_scope(db, current_user)
+    )
+    if severity:
+        anomalies = [a for a in anomalies if a["severity"] == severity]
+    return {"anomalies": anomalies[:limit], "total": len(anomalies)}
 
 
 @router.get("/analytics/hospitals/{hospital_org_id}/override-history")
@@ -80,7 +81,9 @@ async def get_hospital_override_history(
     current_user: AdjusterOrAbove = None,
 ):
     """Per-hospital override history — feeds the adjuster's 'prior overrides' warning."""
-    patterns = await analytics_service.get_hospital_billing_patterns(db, hospital_org_id)
+    patterns = await analytics_service.get_hospital_billing_patterns(
+        db, hospital_org_id, insurer_org_id=await insurer_scope(db, current_user)
+    )
     return {
         "hospital_org_id": str(hospital_org_id),
         "common_override_items": patterns.get("common_override_items", []),
@@ -109,17 +112,16 @@ async def get_sla_report(
     db: DBSession,
     current_user: AdjusterOrAbove,
     period_days: int = Query(30, ge=1, le=365),
-    org_id: uuid.UUID | None = Query(None),
 ):
     """
-    Organisation-wide SLA compliance report.
+    SLA compliance report over the caller's insurer scope.
     Shows breach rates, average resolution times, and compliance percentage.
     """
     period_end = datetime.now(timezone.utc)
     period_start = period_end - timedelta(days=period_days)
 
     report = await analytics_service.get_sla_compliance_report(
-        db, period_start, period_end, org_id
+        db, period_start, period_end, insurer_org_id=await insurer_scope(db, current_user)
     )
     return report
 
@@ -136,32 +138,41 @@ async def get_audit_trail(
     Immutable audit log export.
     In production, augment with Cloud Audit Logs for full GCP-level traceability.
     """
-    from sqlalchemy import select
-    from app.models.claim import ClaimStatusHistory
+    from sqlalchemy import func, select
+    from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
 
-    query = select(ClaimStatusHistory).order_by(ClaimStatusHistory.created_at.desc())
+    # Same scope as the insurer's claims: its own insurer only, never hospital-side drafts
+    conditions = [Claim.status != ClaimStatus.DRAFT]
+    scope = await insurer_scope(db, current_user)
+    if scope:
+        conditions.append(Claim.insurer_org_id == scope)
     if claim_id:
-        query = query.where(ClaimStatusHistory.claim_id == claim_id)
+        conditions.append(ClaimStatusHistory.claim_id == claim_id)
     if user_id:
-        query = query.where(ClaimStatusHistory.changed_by_id == user_id)
-    query = query.limit(limit)
+        conditions.append(ClaimStatusHistory.changed_by_id == user_id)
 
-    result = await db.execute(query)
-    entries = result.scalars().all()
+    base = select(ClaimStatusHistory, Claim.claim_number).join(
+        Claim, Claim.id == ClaimStatusHistory.claim_id
+    ).where(*conditions)
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    rows = (
+        await db.execute(base.order_by(ClaimStatusHistory.created_at.desc()).limit(limit))
+    ).all()
 
     return {
         "entries": [
             {
                 "timestamp": e.created_at.isoformat(),
                 "claim_id": str(e.claim_id),
+                "claim_number": claim_number,
                 "from_status": e.from_status.value if e.from_status else None,
                 "to_status": e.to_status.value,
                 "changed_by_id": str(e.changed_by_id) if e.changed_by_id else None,
                 "note": e.note,
             }
-            for e in entries
+            for e, claim_number in rows
         ],
-        "total": len(entries),
+        "total": total,
     }
 
 

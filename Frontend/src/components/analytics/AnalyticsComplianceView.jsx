@@ -31,16 +31,17 @@ export function AnalyticsComplianceView() {
   const [slaReport, setSlaReport] = useState(null)
   const [anomalies, setAnomalies] = useState([])
   const [auditEntries, setAuditEntries] = useState([])
+  const [auditTotal, setAuditTotal] = useState(0)
   const [loading, setLoading] = useState(true)
 
   // Auto-approval thresholds state
   const [thresholds, setThresholds] = useState({
-    confidence: 0.95,
+    confidence: 0.92, // backend defaults until the organisation's values load
     maxAmount: 50000,
   })
   const [savingThresholds, setSavingThresholds] = useState(false)
 
-  const orgId = user?.org_id || "11111111-1111-1111-1111-111111111111"
+  const orgId = user?.org_id
 
   const loadData = async () => {
     setLoading(true)
@@ -50,16 +51,17 @@ export function AnalyticsComplianceView() {
         api.compliance.getAnomalies().catch(() => ({ anomalies: [] })),
         api.compliance.getAuditTrail({ limit: 50 }).catch(() => ({ entries: [] })),
       ])
-      if (report) setSlaReport(report)
+      setSlaReport(report)
       setAnomalies(anomData?.anomalies || [])
       setAuditEntries(auditData?.entries || [])
+      setAuditTotal(auditData?.total ?? auditData?.entries?.length ?? 0)
 
       if (orgId) {
         try {
           const t = await api.compliance.getAutoApprovalThresholds(orgId)
           if (t) {
             setThresholds({
-              confidence: t.auto_approval_confidence_threshold ?? 0.95,
+              confidence: t.auto_approval_confidence_threshold ?? 0.92,
               maxAmount: t.auto_approval_max_amount_inr ?? 50000,
             })
           }
@@ -156,7 +158,7 @@ export function AnalyticsComplianceView() {
             }`}
           >
             <History className="w-3.5 h-3.5" />
-            <span>Audit Trail ({auditEntries.length})</span>
+            <span>Audit Trail ({auditTotal})</span>
           </button>
           <button
             onClick={() => setActiveTab("thresholds")}
@@ -180,13 +182,15 @@ export function AnalyticsComplianceView() {
             <Card className="rounded-2xl border-l-4 border-l-emerald-600 shadow-xs">
               <CardContent className="p-4">
                 <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  IRDAI SLA Compliance
+                  IRDAI SLA Compliance · 30d
                 </span>
                 <div className="text-3xl font-extrabold text-emerald-600 mt-1">
-                  {slaReport?.sla_compliance_rate?.toFixed?.(1) || "97.2"}%
+                  {slaReport?.sla_compliance_rate != null ? `${slaReport.sla_compliance_rate.toFixed(1)}%` : "—"}
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  {slaReport?.resolved_within_sla ?? 241} of {slaReport?.total_claims ?? 248} within 3 hours
+                  {slaReport
+                    ? `${slaReport.resolved_within_sla} of ${slaReport.resolved_within_sla + slaReport.sla_breached} decided claims within 3 hours`
+                    : "SLA report unavailable"}
                 </p>
               </CardContent>
             </Card>
@@ -194,13 +198,15 @@ export function AnalyticsComplianceView() {
             <Card className="rounded-2xl border-l-4 border-l-blue-600 shadow-xs">
               <CardContent className="p-4">
                 <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  Avg Turnaround Time
+                  Avg Turnaround Time · 30d
                 </span>
                 <div className="text-3xl font-extrabold text-blue-600 mt-1">
-                  {slaReport?.avg_resolution_minutes?.toFixed?.(1) || "24.6"} min
+                  {slaReport?.avg_resolution_minutes != null ? `${slaReport.avg_resolution_minutes.toFixed(1)} min` : "—"}
                 </div>
-                <p className="text-[11px] text-emerald-600 mt-1 font-medium">
-                  &darr; 84% reduction vs 3+ hr manual baseline
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {slaReport?.finalized_claims
+                    ? `Submit to finalize, across ${slaReport.finalized_claims} finalized claim${slaReport.finalized_claims === 1 ? "" : "s"}`
+                    : "No claims finalized in the last 30 days"}
                 </p>
               </CardContent>
             </Card>
@@ -208,12 +214,16 @@ export function AnalyticsComplianceView() {
             <Card className="rounded-2xl border-l-4 border-l-red-600 shadow-xs">
               <CardContent className="p-4">
                 <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                  SLA Breaches
+                  SLA Breaches · 30d
                 </span>
                 <div className="text-3xl font-extrabold text-red-600 mt-1">
-                  {slaReport?.sla_breached ?? 0}
+                  {slaReport?.sla_breached ?? "—"}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Reported to regulatory compliance logs</p>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {slaReport
+                    ? `Finalized late or open past deadline · ${slaReport.pending_within_sla} still within SLA`
+                    : "SLA report unavailable"}
+                </p>
               </CardContent>
             </Card>
 
@@ -225,7 +235,7 @@ export function AnalyticsComplianceView() {
                 <div className="text-3xl font-extrabold text-amber-600 mt-1">
                   {anomalies.length}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Upcoding / unbundling patterns</p>
+                <p className="text-[11px] text-slate-500 mt-1">Low approval rates / repeatedly overridden items</p>
               </CardContent>
             </Card>
           </div>
@@ -308,6 +318,7 @@ export function AnalyticsComplianceView() {
               </CardTitle>
               <p className="text-xs text-slate-500">
                 Chronological log of claim state transitions, status updates, and adjuster sign-offs per IRDAI compliance guidelines.
+                {auditTotal > auditEntries.length && ` Showing the latest ${auditEntries.length} of ${auditTotal}.`}
               </p>
             </div>
             <Button
@@ -331,7 +342,7 @@ export function AnalyticsComplianceView() {
                   <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase text-[10px]">
                     <tr>
                       <th className="px-4 py-3">Timestamp</th>
-                      <th className="px-4 py-3">Claim ID</th>
+                      <th className="px-4 py-3">Claim</th>
                       <th className="px-4 py-3">Transition</th>
                       <th className="px-4 py-3">Audit Notes</th>
                     </tr>
@@ -342,8 +353,8 @@ export function AnalyticsComplianceView() {
                         <td className="px-4 py-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">
                           {formatDateTime(e.timestamp)}
                         </td>
-                        <td className="px-4 py-3 font-mono text-slate-700 text-[11px]">
-                          {e.claim_id?.slice(0, 13)}...
+                        <td className="px-4 py-3 font-mono text-slate-700 text-[11px]" title={e.claim_id}>
+                          {e.claim_number || `${e.claim_id?.slice(0, 13)}...`}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">

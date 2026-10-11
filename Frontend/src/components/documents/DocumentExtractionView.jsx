@@ -403,6 +403,12 @@ export function DocumentExtractionView({
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-4">
+          {claimStatus === "draft" && (
+            <p className="text-[11px] text-slate-600 mb-3">
+              Required before you can submit to the insurer: a <strong>Policy Document</strong> and an{" "}
+              <strong>Itemized Hospital Bill</strong>.
+            </p>
+          )}
           <form onSubmit={handleUpload} className="flex flex-col sm:flex-row items-center gap-3">
             <select
               value={docType}

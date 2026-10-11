@@ -234,6 +234,10 @@ export const api = {
       return await apiRequest("/queue")
     },
 
+    async getStats() {
+      return await apiRequest("/queue/stats")
+    },
+
     async getUnassignedQueue() {
       return await apiRequest("/queue/unassigned")
     },

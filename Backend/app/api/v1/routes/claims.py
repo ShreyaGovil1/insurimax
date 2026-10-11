@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from app.core.access import STAFF_ROLES, insurer_scope, require_claim_access, require_hospital_desk
 from app.core.deps import AdjusterOrAbove, CurrentUser, DBSession
 from app.models.claim import ClaimStatus
+from app.models.document import DocumentType
 from app.models.user import OrgType, UserRole
 from app.schemas.claim import (
     ClaimAggregateSummary,
@@ -38,6 +39,12 @@ router = APIRouter(prefix="/claims", tags=["Claims"])
 
 # Statuses only the hospital moves a claim through (create -> draft, submit -> submitted).
 _HOSPITAL_OWNED_STATUSES = (ClaimStatus.DRAFT, ClaimStatus.SUBMITTED)
+# Documents a claim must carry before the hospital can submit it to the insurer.
+_REQUIRED_FOR_SUBMISSION = (
+    (DocumentType.POLICY_DOCUMENT, "policy document"),
+    (DocumentType.ITEMIZED_BILL, "medical bill"),
+)
+
 # Retired statuses: kept in the enum for old history rows, never set again.
 _RETIRED_STATUSES = (ClaimStatus.ESCALATED, ClaimStatus.STALE)
 
@@ -199,17 +206,20 @@ async def update_claim_status(
 @router.post("/{claim_id}/submit", response_model=ClaimRead)
 async def submit_claim(claim_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     """
-    Hospital submits a drafted claim once its documents are attached.
-    Only now does the claim reach the insurer, and only now does the IRDAI SLA clock start.
+    Hospital submits a drafted claim once its documents are attached: at least the policy
+    document and the itemized medical bill are required. Only now does the claim reach the
+    insurer, and only now does the IRDAI SLA clock start.
     """
     require_hospital_desk(current_user, "submit claims")
     claim = await require_claim_access(db, claim_id, current_user)
     if claim.status != ClaimStatus.DRAFT:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="This claim has already been submitted")
-    if not claim.documents:
+    attached = {doc.doc_type for doc in claim.documents}
+    missing = [label for doc_type, label in _REQUIRED_FOR_SUBMISSION if doc_type not in attached]
+    if missing:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Attach at least one document before submitting the claim",
+            detail=f"Attach the {' and the '.join(missing)} before submitting the claim to the insurer",
         )
     return await claim_service.submit_claim(db, claim, current_user.id)
 

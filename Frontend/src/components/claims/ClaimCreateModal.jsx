@@ -21,6 +21,12 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
     adjuster_notes: "",
   })
   const [insurers, setInsurers] = useState([])
+  // Second step: the hospital confirms before the draft is created
+  const [confirming, setConfirming] = useState(false)
+
+  useEffect(() => {
+    if (!open) setConfirming(false)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -38,7 +44,7 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
     if (!formData.patient_name || !formData.insurer_org_id) {
       toast({
@@ -48,7 +54,10 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
       })
       return
     }
+    setConfirming(true)
+  }
 
+  const handleConfirmCreate = async () => {
     setLoading(true)
     try {
       const payload = {
@@ -64,10 +73,11 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
       const res = await api.claims.create(payload)
       toast({
         title: "Draft Claim Created",
-        description: `Claim ${res.claim_number} saved as a draft. Attach its documents, then submit it to the insurer to start the 3-hour SLA.`,
+        description: `Claim ${res.claim_number} saved as a draft. Attach the policy and the medical bill, then submit it to the insurer to start the 3-hour SLA.`,
         variant: "success",
       })
       onClaimCreated?.(res)
+      setConfirming(false)
       onOpenChange(false)
       // Reset form
       setFormData({
@@ -96,15 +106,38 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
         <DialogHeader>
           <DialogTitle>Intake New Cashless Claim</DialogTitle>
           <DialogDescription>
-            Register new discharge claim. The 3-Hour IRDAI turnaround timer starts immediately upon submission.
+            Register a new discharge claim. It is saved as a draft so you can attach its documents first.
           </DialogDescription>
         </DialogHeader>
 
+        {confirming ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start space-x-3 text-xs text-amber-900">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-sm">Create claim for {formData.patient_name}?</div>
+                <p>SLA will begin after attaching the documents and submitting to the insurer.</p>
+                <p className="text-amber-800">
+                  Insurer: <strong>{insurers.find((i) => i.id === formData.insurer_org_id)?.name}</strong>. The policy and
+                  the medical bill must be attached before the claim can be submitted.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setConfirming(false)} disabled={loading}>
+                Back
+              </Button>
+              <Button type="button" onClick={handleConfirmCreate} disabled={loading} className="bg-blue-600 hover:bg-blue-700">
+                {loading ? "Creating Claim..." : "Confirm & Create Claim"}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg flex items-center space-x-2 text-xs text-blue-900">
             <Clock className="w-4 h-4 text-blue-600 shrink-0" />
             <span>
-              <strong>IRDAI Cashless SLA:</strong> 3 Hours deadline will automatically attach to this claim.
+              <strong>IRDAI Cashless SLA:</strong> the 3-hour deadline begins after you attach the documents and submit the claim to the insurer.
             </span>
           </div>
 
@@ -200,10 +233,11 @@ export function ClaimCreateModal({ open, onOpenChange, onClaimCreated }) {
               Cancel
             </Button>
             <Button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700">
-              {loading ? "Registering Claim..." : "Create & Start SLA"}
+              Create Claim
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   )

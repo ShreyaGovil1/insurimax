@@ -27,7 +27,6 @@ import { useToast } from "../ui/toast"
 
 export function AdjusterQueueView({ onSelectClaim }) {
   const { user } = useAuth()
-  const isInsurer = ["admin", "adjuster"].includes(user?.role)
   const { toast } = useToast()
   let navigate = () => {}
   try {
@@ -39,25 +38,23 @@ export function AdjusterQueueView({ onSelectClaim }) {
     if (navigate) navigate(`/claims/${claimId}`)
   }
 
-  const [activeTab, setActiveTab] = useState("assigned") // "assigned" | "unassigned"
   const [statusFilter, setStatusFilter] = useState("all") // "all" | "in_review" | "auto_approved" | "mismatch"
   const [claims, setClaims] = useState([])
-  const [unassignedClaims, setUnassignedClaims] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  const [dailyDigest, setDailyDigest] = useState(null)
+  // Real queue-scoped metrics from GET /queue/stats (null until loaded or if unavailable)
+  const [stats, setStats] = useState(null)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [queueData, unassignedData, digestData] = await Promise.all([
+      // One queue for everything: it already includes unassigned claims
+      const [queueData, statsData] = await Promise.all([
         api.queue.getQueue(),
-        isInsurer ? api.queue.getUnassignedQueue().catch(() => []) : Promise.resolve([]),
-        user?.id ? api.queue.getAdjusterDailyDigest(user.id).catch(() => null) : Promise.resolve(null),
+        api.queue.getStats().catch(() => null),
       ])
       setClaims(queueData || [])
-      setUnassignedClaims(unassignedData || [])
-      setDailyDigest(digestData)
+      setStats(statsData)
     } catch (err) {
       toast({
         title: "Queue Notice",
@@ -75,7 +72,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
     return () => clearInterval(interval)
   }, [user])
 
-  const displayedList = activeTab === "unassigned" ? unassignedClaims : claims
+  const displayedList = claims
 
   const inReviewCount = displayedList.filter(
     (c) => c.status === "in_review" || c.status === "submitted" || c.status === "adjudication_in_progress"
@@ -142,8 +139,10 @@ export function AdjusterQueueView({ onSelectClaim }) {
           </div>
 
           <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-300">
-            <span>Avg. SLA Turnaround</span>
-            <span className="font-bold text-[#A3FF12]">{dailyDigest?.avg_turnaround_minutes || 24} min</span>
+            <span>Avg. Turnaround Today</span>
+            <span className="font-bold text-[#A3FF12]">
+              {stats?.avg_turnaround_minutes != null ? `${stats.avg_turnaround_minutes} min` : "None finalized yet"}
+            </span>
           </div>
         </div>
 
@@ -186,13 +185,19 @@ export function AdjusterQueueView({ onSelectClaim }) {
 
           <div className="my-3">
             <div className="text-3xl font-extrabold tracking-tight text-slate-900">{autoApprovedCount}</div>
-            <div className="text-xs text-slate-500 mt-0.5">Confidence ≥ 92%, &lt; ₹50k</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              {stats
+                ? `Confidence ≥ ${Math.round(stats.auto_approval_confidence_threshold * 100)}%, ≤ ${formatCurrencyINR(stats.auto_approval_max_amount_inr)}`
+                : "In the current queue"}
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Fraud / Leakage Saved</span>
+            <span title="Non-payables, sub-limit excess and exclusions found by adjudications run today">
+              Deductions Found Today
+            </span>
             <span className="font-bold text-emerald-600 font-mono">
-              {formatCurrencyINR(dailyDigest?.total_savings_inr || 284500)}
+              {formatCurrencyINR(stats?.deductions_identified_today_inr || 0)}
             </span>
           </div>
         </div>
@@ -201,7 +206,7 @@ export function AdjusterQueueView({ onSelectClaim }) {
         <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              Adjudication Accuracy
+              AI Agreement Rate
             </span>
             <div className="p-2 rounded-xl bg-purple-50 text-purple-600">
               <Sparkles className="w-4 h-4" />
@@ -210,14 +215,20 @@ export function AdjusterQueueView({ onSelectClaim }) {
 
           <div className="my-3">
             <div className="text-3xl font-extrabold tracking-tight text-slate-900">
-              {dailyDigest?.accuracy_score || 98.4}%
+              {stats?.ai_agreement_rate != null ? `${stats.ai_agreement_rate}%` : "—"}
             </div>
-            <div className="text-xs text-slate-500 mt-0.5">Gemini 1.5 Pro verification</div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              {stats?.ai_line_items_reviewed
+                ? `${stats.ai_line_items_reviewed - stats.ai_overrides} of ${stats.ai_line_items_reviewed} AI line decisions kept (last ${stats.ai_agreement_window_days} days)`
+                : "No AI line decisions in the last 30 days"}
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span>Adjudicated Today</span>
-            <span className="font-bold text-slate-800">{dailyDigest?.claims_adjudicated || 14} claims</span>
+            <span>Finalized Today</span>
+            <span className="font-bold text-slate-800">
+              {stats?.finalized_today ?? 0} {stats?.finalized_today === 1 ? "claim" : "claims"}
+            </span>
           </div>
         </div>
       </div>
@@ -227,31 +238,9 @@ export function AdjusterQueueView({ onSelectClaim }) {
         <CardHeader className="pb-3 border-b border-slate-100/80 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             
-            {/* Ronas IT Segmented Pill Navigation */}
-            <div className="inline-flex items-center p-1 bg-slate-100 rounded-full border border-slate-200/70">
-              <button
-                onClick={() => setActiveTab("assigned")}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === "assigned"
-                    ? "bg-slate-950 text-white shadow-xs font-bold"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Priority Queue ({claims.length})
-              </button>
-              {isInsurer && (
-              <button
-                onClick={() => setActiveTab("unassigned")}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === "unassigned"
-                    ? "bg-slate-950 text-white shadow-xs font-bold"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Unassigned Pool ({unassignedClaims.length})
-              </button>
-              )}
-            </div>
+            <h2 className="text-sm font-bold text-slate-900">
+              Queue <span className="text-slate-500 font-semibold">({claims.length})</span>
+            </h2>
 
             {/* Sleek Pill Search */}
             <div className="relative w-full sm:w-64">
