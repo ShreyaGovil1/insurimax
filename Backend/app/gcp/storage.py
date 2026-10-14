@@ -142,12 +142,12 @@ def build_policy_object_key(policy_id: uuid.UUID, version_id: uuid.UUID, filenam
 
 # ── Signed URL ────────────────────────────────────────────────────────────────
 
-async def generate_signed_url(object_key: str, expiry_minutes: int | None = None) -> str:
+async def generate_signed_url(object_key: str, expiry_minutes: int | None = None) -> str | None:
     """Generate a V4 signed URL for temporary read access or local data URI fallback."""
     loop = asyncio.get_event_loop()
     expiry = expiry_minutes or settings.GCS_SIGNED_URL_EXPIRY_MINUTES
 
-    def _sign() -> str:
+    def _sign() -> str | None:
         # Files that fell back to local disk at upload time are not in the bucket; signing a
         # GCS URL for them would 404, so serve them inline (same order as download_as_bytes).
         local_path = LOCAL_STORAGE_DIR / object_key
@@ -160,15 +160,29 @@ async def generate_signed_url(object_key: str, expiry_minutes: int | None = None
         if bucket is not None:
             try:
                 blob: Blob = bucket.blob(object_key)
-                return blob.generate_signed_url(
-                    expiration=timedelta(minutes=expiry),
-                    method="GET",
-                    version="v4",
-                )
+                client = _get_gcs_client()
+                creds = getattr(client, "_credentials", None) if client else None
+                kwargs = {
+                    "expiration": timedelta(minutes=expiry),
+                    "method": "GET",
+                    "version": "v4",
+                }
+                # When running on Cloud Run or Compute Engine, credentials do not have a private key
+                # but can sign blobs via IAM credentials if service_account_email and access_token are passed
+                if creds and getattr(creds, "signer", None) is None:
+                    sa_email = getattr(creds, "service_account_email", None)
+                    if sa_email:
+                        import google.auth.transport.requests
+                        req = google.auth.transport.requests.Request()
+                        creds.refresh(req)
+                        kwargs["service_account_email"] = sa_email
+                        kwargs["access_token"] = creds.token
+
+                return blob.generate_signed_url(**kwargs)
             except Exception as exc:
                 logger.warning("GCS signed URL generation failed (%s)", exc)
 
-        return f"/local-storage/{object_key}"
+        return None
 
     return await loop.run_in_executor(None, _sign)
 

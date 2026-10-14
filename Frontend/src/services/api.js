@@ -378,6 +378,10 @@ export const api = {
       return await apiRequest(`/claims/${claimId}/documents/${docId}`)
     },
 
+    async getContentBlobUrl(claimId, docId) {
+      return await apiBlobUrl(`/claims/${claimId}/documents/${docId}/content`)
+    },
+
     async delete(claimId, docId) {
       return await apiRequest(`/claims/${claimId}/documents/${docId}`, {
         method: "DELETE",
@@ -541,6 +545,7 @@ export const api = {
         body: complainant || {},
       })
     },
+
 
     async lookupEscalation({ query, patientName, phone, hospitalName, issueType = "discharge_delay", claimId } = {}) {
       return await apiRequest(`/patient/escalation/lookup`, {

@@ -12,8 +12,8 @@ DATABASE_URL="${3:-}"
 ENV_FILE="$(dirname "$0")/Backend/.env"
 GCS_BUCKET_NAME="insurimax-data-01"
 GOOGLE_API_KEY=""
-GEMINI_MODEL="gemini-1.5-pro-002"
-GEMINI_FLASH_MODEL="gemini-1.5-flash-002"
+GEMINI_MODEL="gemini-2.5-flash"
+GEMINI_FLASH_MODEL="gemini-2.5-flash"
 
 if [[ -f "$ENV_FILE" ]]; then
   echo "Reading defaults from Backend/.env..."
@@ -62,23 +62,35 @@ REPO_PATH="$REGION-docker.pkg.dev/$PROJECT_ID/insurimax-repo"
 echo -e "\n[4/5] Building & Deploying Backend..."
 gcloud builds submit ./Backend --tag "$REPO_PATH/backend:latest"
 
-BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=prod-secret-$(date +%s),CORS_ORIGINS=*,DB_SSL=true,GCS_BUCKET_NAME=$GCS_BUCKET_NAME,GEMINI_MODEL=$GEMINI_MODEL,GEMINI_FLASH_MODEL=$GEMINI_FLASH_MODEL"
-if [[ -n "$DATABASE_URL" ]]; then
-  BACKEND_ENV="$BACKEND_ENV,DATABASE_URL=$DATABASE_URL"
-fi
-if [[ -n "$GOOGLE_API_KEY" ]]; then
-  BACKEND_ENV="$BACKEND_ENV,GOOGLE_API_KEY=$GOOGLE_API_KEY"
-fi
+if [[ -f "$(dirname "$0")/Backend/env.cloudrun.yaml" ]]; then
+  gcloud run deploy insurimax-backend \
+    --image "$REPO_PATH/backend:latest" \
+    --region "$REGION" \
+    --platform managed \
+    --allow-unauthenticated \
+    --memory 2Gi \
+    --cpu 2 \
+    --timeout 300 \
+    --env-vars-file "$(dirname "$0")/Backend/env.cloudrun.yaml"
+else
+  BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=prod-secret-$(date +%s),CORS_ORIGINS=*,DB_SSL=false,GCS_BUCKET_NAME=$GCS_BUCKET_NAME,GEMINI_MODEL=$GEMINI_MODEL,GEMINI_FLASH_MODEL=$GEMINI_FLASH_MODEL"
+  if [[ -n "$DATABASE_URL" ]]; then
+    BACKEND_ENV="$BACKEND_ENV,DATABASE_URL=$DATABASE_URL"
+  fi
+  if [[ -n "$GOOGLE_API_KEY" ]]; then
+    BACKEND_ENV="$BACKEND_ENV,GOOGLE_API_KEY=$GOOGLE_API_KEY"
+  fi
 
-gcloud run deploy insurimax-backend \
-  --image "$REPO_PATH/backend:latest" \
-  --region "$REGION" \
-  --platform managed \
-  --allow-unauthenticated \
-  --memory 2Gi \
-  --cpu 2 \
-  --timeout 300 \
-  --set-env-vars "$BACKEND_ENV"
+  gcloud run deploy insurimax-backend \
+    --image "$REPO_PATH/backend:latest" \
+    --region "$REGION" \
+    --platform managed \
+    --allow-unauthenticated \
+    --memory 2Gi \
+    --cpu 2 \
+    --timeout 300 \
+    --set-env-vars "$BACKEND_ENV"
+fi
 
 BACKEND_URL="$(gcloud run services describe insurimax-backend --region "$REGION" --format="value(status.url)")"
 echo "Backend deployed at: $BACKEND_URL"

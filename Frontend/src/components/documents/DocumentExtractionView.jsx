@@ -152,8 +152,24 @@ export function DocumentExtractionView({
     setPreviewUrl(null)
     setPreviewLoading(true)
     try {
-      const res = await api.documents.getSignedUrl(claimId, doc.id)
-      setPreviewUrl(res?.signed_url || null)
+      let finalUrl = null
+      try {
+        const res = await api.documents.getSignedUrl(claimId, doc.id)
+        const sUrl = res?.signed_url
+        if (sUrl && (sUrl.startsWith("https://") || sUrl.startsWith("http://") || sUrl.startsWith("data:"))) {
+          finalUrl = sUrl
+        } else if (sUrl && (sUrl.startsWith("/claims/") || sUrl.startsWith("/api/v1/"))) {
+          finalUrl = await api.documents.getContentBlobUrl(claimId, doc.id)
+        }
+      } catch (signErr) {
+        console.warn("Signed URL error, trying direct content blob:", signErr)
+      }
+
+      if (!finalUrl) {
+        finalUrl = await api.documents.getContentBlobUrl(claimId, doc.id)
+      }
+
+      setPreviewUrl(finalUrl)
     } catch (err) {
       toast({ title: "Preview failed", description: err.message, variant: "destructive" })
       setPreviewDoc(null)
@@ -163,6 +179,9 @@ export function DocumentExtractionView({
   }
 
   const closePreview = () => {
+    if (previewUrl && previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(previewUrl)
+    }
     setPreviewDoc(null)
     setPreviewUrl(null)
   }
