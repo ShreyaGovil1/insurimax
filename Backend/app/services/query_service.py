@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import ai_model_service
 from app.gcp.gemini import QUERY_DRAFT_SYSTEM_PROMPT, generate_json
 from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
 from app.models.query import ClaimQuery, QueryStatus
@@ -56,7 +57,7 @@ async def draft_query_with_ai(
         f"Context about the claim issue:\n{context}\n\n"
         "Draft the query now."
     )
-    result, _, _ = await generate_json(prompt=prompt)
+    result, _, _ = await generate_json(prompt=prompt, model_name=await ai_model_service.model_for("query_draft"))
     if isinstance(result, dict):
         return result.get("query_text", "Please clarify the item in question.")
     return "Please clarify the item in question."

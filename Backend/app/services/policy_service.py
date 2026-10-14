@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.gcp import storage as gcs
+from app.services import ai_model_service
 from app.gcp.gemini import generate_json
 from app.models.policy import NonPayableItem, Policy, PolicyRule, PolicyVersion, RuleType
 from app.schemas.policy import (
@@ -135,15 +136,16 @@ async def extract_policy_rules_from_document(
         "Extract from the attached policy document now."
     )
 
+    policy_model = await ai_model_service.model_for("policy_extraction")
     result, _, _ = await generate_json(
         prompt=prompt,
         inline_data=[{"mime_type": "application/pdf", "data": file_bytes}],
-        model_name=settings.GEMINI_MODEL,
+        model_name=policy_model,
     )
 
     version.structured_rules = result.get("structured_summary")
     version.extraction_status = "completed"
-    version.extracted_by_model = settings.GEMINI_MODEL
+    version.extracted_by_model = policy_model
 
     # Persist individual rules
     rules_data = result.get("rules", [])

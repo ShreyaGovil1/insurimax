@@ -2,6 +2,9 @@ services:
   frontend:
     build:
       context: ./Frontend
+      args:
+        # Show the demo persona buttons on the sign-in page (local demo only)
+        VITE_DEMO_PERSONAS: "true"
     ports:
       - "8080:8080"
     environment:

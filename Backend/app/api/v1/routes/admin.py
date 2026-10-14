@@ -10,6 +10,8 @@ POST   /admin/users/{userId}/reset-password
 GET    /admin/organizations
 POST   /admin/organizations
 PATCH  /admin/organizations/{orgId}
+GET    /admin/ai-models
+PUT    /admin/ai-models
 """
 import uuid
 from typing import Annotated
@@ -30,7 +32,8 @@ from app.schemas.user import (
     UserListResponse,
     UserRead,
 )
-from app.services import user_service
+from app.schemas.ai_models import AIModelSettings, AIModelSettingsUpdate
+from app.services import ai_model_service, user_service
 
 AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
 
@@ -143,3 +146,24 @@ async def update_organization(
         setattr(org, key, value)
     await db.flush()
     return org
+
+
+# ── AI models ─────────────────────────────────────────────────────────────────
+
+@router.get("/ai-models", response_model=AIModelSettings)
+async def get_ai_models(
+    db: DBSession,
+    _admin: AdminUser,
+    refresh: bool = Query(False, description="Re-fetch the models available on the Google account"),
+):
+    """The Gemini model each AI step uses, and the models an admin can choose from."""
+    return await ai_model_service.get_config(db, refresh=refresh)
+
+
+@router.put("/ai-models", response_model=AIModelSettings)
+async def update_ai_models(body: AIModelSettingsUpdate, db: DBSession, admin: AdminUser):
+    """Choose the Gemini model per AI step. A null model resets that step to its default."""
+    try:
+        return await ai_model_service.update_config(db, body.models, admin.id)
+    except ai_model_service.InvalidModelChoice as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.core.deps import CurrentUser, DBSession
+from app.services import ai_model_service
 from app.gcp.gemini import PRE_CHECK_SYSTEM_PROMPT, generate_json
 from app.core.config import settings
 
@@ -74,7 +75,7 @@ async def run_pre_check(
         result, _, _ = await generate_json(
             prompt=prompt,
             inline_data=inline_data if inline_data else None,
-            model_name=settings.GEMINI_FLASH_MODEL,  # use Flash for pre-checks (cheaper/faster)
+            model_name=await ai_model_service.model_for("hospital_precheck"),
         )
     except Exception as exc:
         raise HTTPException(

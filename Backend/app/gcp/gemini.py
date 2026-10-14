@@ -183,9 +183,12 @@ def _call_vertex(
     if "us-central1" not in candidate_locations:
         candidate_locations.append("us-central1")
 
+    # Try the chosen model in every location before substituting another model, so a model
+    # that isn't offered in the configured region still runs as chosen (see vertex_locations()
+    # in app.services.ai_model_service, which lists models from these same locations).
     last_exc = None
-    for loc in candidate_locations:
-        for m_name in candidate_models:
+    for m_name in candidate_models:
+        for loc in candidate_locations:
             try:
                 model = _get_vertex_model(m_name, loc)
                 response = model.generate_content(parts)

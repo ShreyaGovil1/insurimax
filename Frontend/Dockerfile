@@ -7,6 +7,11 @@ WORKDIR /app
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
+# Demo persona buttons on the sign-in page ("true" to enable). Local demos only: it puts
+# the seeded accounts' passwords in the bundle. Leave unset for public deployments.
+ARG VITE_DEMO_PERSONAS
+ENV VITE_DEMO_PERSONAS=$VITE_DEMO_PERSONAS
+
 # Install dependencies using clean install
 COPY package.json package-lock.json ./
 RUN npm ci

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Building2, KeyRound, MoreVertical, Plus, Power, Search, UserCheck, Users, UserX } from "lucide-react"
+import { Building2, KeyRound, MoreVertical, Plus, Power, Search, Sparkles, UserCheck, Users, UserX } from "lucide-react"
 import { api } from "../../services/api"
 import { useAuth } from "../../context/AuthContext"
 import { cn, formatRelative } from "../../lib/utils"
@@ -15,6 +15,7 @@ import { Skeleton } from "../ui/skeleton"
 import { EmptyState } from "../ui/empty-state"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../ui/dialog"
 import { PageHeader } from "../common/PageHeader"
+import { AIModelsPanel } from "./AIModelsPanel"
 
 const ROLES = [
   { value: "adjuster", label: "Adjuster" },
@@ -239,6 +240,7 @@ export function AdminPanelView() {
         tabs={[
           { value: "users", label: "Users", icon: Users, count: total || undefined },
           { value: "orgs", label: "Organisations", icon: Building2, count: orgs.length || undefined },
+          { value: "ai", label: "AI models", icon: Sparkles },
         ]}
       />
 
@@ -427,6 +429,8 @@ export function AdminPanelView() {
           </div>
         </section>
       )}
+
+      {tab === "ai" && <AIModelsPanel />}
 
       {tab === "orgs" && (
         <section className="animate-rise overflow-hidden rounded-card bg-surface shadow-card" aria-label="Organisations">

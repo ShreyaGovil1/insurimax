@@ -385,11 +385,13 @@ async def run_adjudication_agent(
     claim_patient_name: str | None = None,
     claim_hospital_name: str | None = None,
     policy_evidence: list[dict] | None = None,
+    models: list[str] | None = None,
 ) -> tuple[dict, int, int]:
     """
     Runs the ADK adjudication agent end-to-end for one claim.
-    Includes automated failover from Pro -> Flash -> Deterministic IRDAI rules engine
-    when Gemini endpoints experience temporary 503 UNAVAILABLE or high demand spikes.
+    Includes automated failover from the primary model -> fallback model -> deterministic
+    IRDAI rules engine when Gemini endpoints experience temporary 503 UNAVAILABLE or high
+    demand spikes. ``models`` is the order to try; it defaults to the env settings.
 
     Returns:
         (parsed_output, prompt_tokens, completion_tokens) where parsed_output
@@ -402,7 +404,7 @@ async def run_adjudication_agent(
     from google.genai import types
 
     # Candidate models to attempt in order
-    candidate_models = [
+    candidate_models = models or [
         settings.GEMINI_MODEL,
         settings.GEMINI_FLASH_MODEL,
     ]

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gcp import storage as gcs
+from app.services import ai_model_service
 from app.gcp.gemini import (
     CLASSIFY_PROMPT,
     get_extraction_prompt,
@@ -79,7 +80,9 @@ async def _detect_document_type(inline_data: list[dict]) -> DocumentType | None:
     """Ask Gemini what the document actually is; None if unsure or on any failure."""
     try:
         result, _, _ = await generate_json(
-            prompt=CLASSIFY_PROMPT, inline_data=inline_data, model_name=settings.GEMINI_MODEL
+            prompt=CLASSIFY_PROMPT,
+            inline_data=inline_data,
+            model_name=await ai_model_service.model_for("document_classification"),
         )
         if isinstance(result, dict) and float(result.get("confidence") or 0) >= 0.7:
             return DocumentType(result.get("document_type"))
@@ -126,10 +129,11 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
             "following the schema for that document type."
         )
 
+        extraction_model = await ai_model_service.model_for("document_extraction")
         extracted, prompt_tokens, completion_tokens = await generate_json(
             prompt=prompt,
             inline_data=inline_data,
-            model_name=settings.GEMINI_MODEL,
+            model_name=extraction_model,
         )
 
         # Turn Gemini's {"source": {page, text}} on every list item into a locatable citation
@@ -151,7 +155,7 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
         if isinstance(extracted, dict):
             extracted["document_type"] = doc.doc_type.value
         job.extracted_payload = extracted
-        job.gemini_model_used = settings.GEMINI_MODEL
+        job.gemini_model_used = extraction_model
         job.prompt_tokens = prompt_tokens
         job.completion_tokens = completion_tokens
         job.completed_at = datetime.now(timezone.utc)

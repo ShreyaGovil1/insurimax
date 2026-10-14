@@ -14,3 +14,4 @@ from app.models.policy import Policy, PolicyVersion, PolicyRule, NonPayableItem 
 from app.models.adjudication import AdjudicationResult, LineItemDecision  # noqa: F401
 from app.models.query import ClaimQuery  # noqa: F401
 from app.models.webhook import WebhookSubscription  # noqa: F401
+from app.models.app_setting import AppSetting  # noqa: F401

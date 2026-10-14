@@ -116,11 +116,13 @@ async function apiBlobUrl(endpoint, { method = "GET", body } = {}) {
 
 // ── Seed User Credentials Reference for Demo Personas ─────────────────────────
 // These sign in to real seeded backend accounts, so they exist only on the Vite
-// dev server and in tests. `vite build` replaces import.meta.env.DEV with
-// `false`, which drops this object literal from the production bundle as dead
-// code and leaves DEMO_CREDENTIALS empty (no login-page fill, no persona switch).
-export const DEMO_PERSONAS_ENABLED = import.meta.env.DEV === true
-export const DEMO_CREDENTIALS = !import.meta.env.DEV ? {} : {
+// dev server, in tests, and in builds made with VITE_DEMO_PERSONAS=true (the local
+// docker-compose demo). Both values are replaced with constants at build time, so in
+// any other production build this object literal is dropped as dead code and
+// DEMO_CREDENTIALS is empty (no login-page fill, no persona switch). Never set
+// VITE_DEMO_PERSONAS for a public deployment: anyone could sign in as the admin.
+export const DEMO_PERSONAS_ENABLED = import.meta.env.DEV === true || import.meta.env.VITE_DEMO_PERSONAS === "true"
+export const DEMO_CREDENTIALS = !DEMO_PERSONAS_ENABLED ? {} : {
   adjuster: {
     email: "adjuster@insurimax.com",
     password: "Password@123",
@@ -258,6 +260,19 @@ export const api = {
       return await apiRequest("/admin/organizations", {
         method: "POST",
         body: JSON.stringify(data),
+      })
+    },
+
+    // Gemini model per AI step. refresh re-fetches the models on the Google account.
+    async getAiModels({ refresh = false } = {}) {
+      return await apiRequest(`/admin/ai-models${refresh ? "?refresh=true" : ""}`)
+    },
+
+    // models: { [stepKey]: modelId | null } — null resets the step to its default
+    async updateAiModels(models) {
+      return await apiRequest("/admin/ai-models", {
+        method: "PUT",
+        body: JSON.stringify({ models }),
       })
     },
   },

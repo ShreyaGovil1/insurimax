@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent.adjudicator import run_adjudication_agent
+from app.services import ai_model_service
 from app.core.config import settings
 from app.models.adjudication import (
     AdjudicationResult,
@@ -317,6 +318,8 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         policy_evidence, evidence_by_id, _ = _select_evidence(passages, bill_items)
 
         # ── Run the ADK adjudication agent ─────────────────────────────────────
+        adjudication_model = await ai_model_service.model_for("adjudication")
+        fallback_model = await ai_model_service.model_for("adjudication_fallback")
         gemini_output, prompt_tokens, completion_tokens = await run_adjudication_agent(
             extracted_data=_without_sources(extracted_data),
             policy_rules=policy_rules,
@@ -324,6 +327,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             claim_patient_name=claim.patient_name,
             claim_hospital_name=claim.hospital_name,
             policy_evidence=policy_evidence,
+            models=[adjudication_model, fallback_model],
         )
 
         # ── Parse new 5-step adjudication output ──────────────────────────────
@@ -461,7 +465,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         adj.confidence_score = round(avg_conf, 4)
         adj.flagged_items_count = flagged_count
         adj.non_payable_items_count = non_payable_count
-        adj.gemini_model_used = settings.GEMINI_MODEL
+        adj.gemini_model_used = adjudication_model
         adj.prompt_tokens = prompt_tokens
         adj.completion_tokens = completion_tokens
         gemini_output["decision_summary"] = _readable_evidence_refs(

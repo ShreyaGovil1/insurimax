@@ -45,6 +45,24 @@ describe("API Client & Services", () => {
     }
   })
 
+  it("exposes persona credentials in a production build made with VITE_DEMO_PERSONAS=true", async () => {
+    vi.stubEnv("DEV", false)
+    vi.stubEnv("VITE_DEMO_PERSONAS", "true")
+    vi.resetModules()
+    try {
+      const demoApi = await import("../services/api")
+      expect(demoApi.DEMO_PERSONAS_ENABLED).toBe(true)
+      expect(Object.values(demoApi.DEMO_CREDENTIALS).map((c) => c.email).sort()).toEqual([
+        "adjuster@insurimax.com",
+        "admin@insurimax.com",
+        "hospital@insurimax.com",
+      ])
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
   it("fetches claims queue with proper schema objects via API", async () => {
     const mockQueue = [
       {

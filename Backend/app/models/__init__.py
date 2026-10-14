@@ -8,6 +8,7 @@ from app.models.policy import Policy, PolicyVersion, PolicyRule, NonPayableItem
 from app.models.adjudication import AdjudicationResult, LineItemDecision
 from app.models.query import ClaimQuery
 from app.models.webhook import WebhookSubscription
+from app.models.app_setting import AppSetting
 
 __all__ = [
     "User",
@@ -24,4 +25,5 @@ __all__ = [
     "LineItemDecision",
     "ClaimQuery",
     "WebhookSubscription",
+    "AppSetting",
 ]
