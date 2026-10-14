@@ -38,3 +38,5 @@ scratch/
 build/
 dist/
 *.egg-info/
+# Service-account keys: mounted at runtime, never baked into an image
+keys/

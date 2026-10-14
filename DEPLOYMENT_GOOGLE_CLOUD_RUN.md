@@ -13,6 +13,7 @@ This guide contains complete, step-by-step instructions to deploy both the **Bac
 6. [Step 5: Configure Production CORS](#step-5-configure-production-cors)
 7. [Step 6: Running Database Migrations / Seeding](#step-6-running-database-migrations--seeding)
 8. [Useful Troubleshooting & Monitoring Commands](#useful-troubleshooting--monitoring-commands)
+9. [Deploying with GitHub Actions](#deploying-with-github-actions)
 
 ---
 
@@ -291,3 +292,84 @@ docker compose up --build
 - **Frontend**: http://localhost:8080
 - **Backend API**: http://localhost:8000
 - **GCS Emulator**: http://localhost:4443
+
+---
+
+## Deploying with GitHub Actions
+
+`.github/workflows/deploy-gcp.yml` deploys on every push to `main` (or manually from **Actions → Deploy to Google Cloud → Run workflow**). It runs the frontend tests and a backend startup check, builds both images, pushes them to Artifact Registry tagged with the commit SHA, runs `alembic upgrade head`, deploys the backend and the frontend, then restricts the backend's CORS to the frontend URL.
+
+GitHub signs in to Google Cloud with **Workload Identity Federation**, so no service-account key is stored in GitHub. Do the one-time setup below once per project.
+
+### 1. Store the backend secrets in Secret Manager
+
+```bash
+export PROJECT_ID="insurimax-511211"
+export REGION="asia-south1"
+export REPO="siddharth329/insurimax"   # GitHub owner/repo
+
+gcloud services enable secretmanager.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
+
+# JWT signing key: random, 32+ bytes (the backend refuses to start with a weak key)
+python3 -c 'import secrets; print(secrets.token_urlsafe(64), end="")' | \
+  gcloud secrets create insurimax-secret-key --data-file=-
+
+# Database connection string
+printf '%s' 'postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME' | \
+  gcloud secrets create insurimax-database-url --data-file=-
+```
+
+### 2. Create the service accounts
+
+```bash
+# Used by GitHub Actions to build and deploy
+gcloud iam service-accounts create github-deployer --display-name="GitHub Actions deployer"
+DEPLOYER="github-deployer@$PROJECT_ID.iam.gserviceaccount.com"
+for role in roles/run.admin roles/artifactregistry.admin roles/iam.serviceAccountUser roles/secretmanager.secretAccessor; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$DEPLOYER" --role="$role"
+done
+
+# Used by the backend at runtime (Vertex AI, document storage, secrets)
+gcloud iam service-accounts create insurimax-backend --display-name="InsuriMax backend runtime"
+RUNTIME="insurimax-backend@$PROJECT_ID.iam.gserviceaccount.com"
+for role in roles/aiplatform.user roles/storage.objectAdmin roles/secretmanager.secretAccessor; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$RUNTIME" --role="$role"
+done
+```
+
+### 3. Let the GitHub repository impersonate the deployer
+
+```bash
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+
+gcloud iam workload-identity-pools create github --location=global --display-name="GitHub"
+gcloud iam workload-identity-pools providers create-oidc github \
+  --location=global --workload-identity-pool=github \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository == '$REPO'"
+
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$REPO"
+
+echo "GCP_WIF_PROVIDER=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github"
+```
+
+### 4. Add the repository variables in GitHub
+
+In **Settings → Secrets and variables → Actions → Variables**, add:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | `insurimax-511211` |
+| `GCP_REGION` | `asia-south1` (optional; this is the default) |
+| `GCP_WIF_PROVIDER` | the value printed at the end of step 3 |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | `github-deployer@insurimax-511211.iam.gserviceaccount.com` |
+| `GCP_RUNTIME_SERVICE_ACCOUNT` | `insurimax-backend@insurimax-511211.iam.gserviceaccount.com` |
+| `GCS_BUCKET_NAME` | `insurimax-data-01` |
+| `DB_SSL` | `true` (optional; this is the default) |
+
+The workflow uses a GitHub **environment** named `production`. Create it under **Settings → Environments** if you want to require an approval before each deploy.
+
+> The deploy never sets `VITE_DEMO_PERSONAS`, so the demo sign-in buttons stay out of the public frontend.
