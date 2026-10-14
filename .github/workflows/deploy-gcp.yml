@@ -1,0 +1,218 @@
+# Deploys InsuriMax (backend + frontend) to Google Cloud Run.
+#
+# Runs on every push to main, or manually from the Actions tab.
+#   1. test     – frontend unit tests and a backend import/startup check
+#   2. deploy   – build both images, push them to Artifact Registry, run database
+#                 migrations, deploy the backend and the frontend, then restrict the
+#                 backend's CORS to the frontend URL
+#
+# One-time setup (see "Deploying with GitHub Actions" in DEPLOYMENT_GOOGLE_CLOUD_RUN.md):
+#   Repository variables (Settings → Secrets and variables → Actions → Variables):
+#     GCP_PROJECT_ID               e.g. insurimax-511211
+#     GCP_REGION                   e.g. asia-south1 (optional, defaults to asia-south1)
+#     GCP_WIF_PROVIDER             projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+#     GCP_DEPLOY_SERVICE_ACCOUNT   the service account GitHub Actions impersonates to deploy
+#     GCP_RUNTIME_SERVICE_ACCOUNT  the service account the Cloud Run backend runs as (optional)
+#     GCS_BUCKET_NAME              e.g. insurimax-data-01
+#     DB_SSL                       "true" or "false" (optional, defaults to "true")
+#   Secret Manager secrets (in the GCP project, not in GitHub):
+#     insurimax-secret-key         JWT signing key, 32+ random bytes
+#     insurimax-database-url       postgresql+asyncpg://... connection string
+#
+# No GCP key is stored in GitHub: authentication uses Workload Identity Federation.
+
+name: Deploy to Google Cloud
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: "Run database migrations (alembic upgrade head) before deploying"
+        type: boolean
+        default: true
+
+concurrency:
+  group: deploy-gcp
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || 'asia-south1' }}
+  REPOSITORY: insurimax-repo
+  BACKEND_SERVICE: insurimax-backend
+  FRONTEND_SERVICE: insurimax-frontend
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: Frontend tests
+        working-directory: Frontend
+        run: |
+          npm ci
+          npx vitest run
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Backend starts
+        working-directory: Backend
+        run: |
+          uv sync --frozen
+          # A throwaway key: the app refuses to import with a missing or weak SECRET_KEY
+          SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')" \
+            uv run python -c "import main; print('backend imports OK')"
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          for name in GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT GCS_BUCKET_NAME; do
+            case "$name" in
+              GCP_PROJECT_ID) value="${{ vars.GCP_PROJECT_ID }}" ;;
+              GCP_WIF_PROVIDER) value="${{ vars.GCP_WIF_PROVIDER }}" ;;
+              GCP_DEPLOY_SERVICE_ACCOUNT) value="${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" ;;
+              GCS_BUCKET_NAME) value="${{ vars.GCS_BUCKET_NAME }}" ;;
+            esac
+            [ -z "$value" ] && missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository variables:$missing (see the header of this workflow)"
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Ensure Artifact Registry repository
+        run: |
+          if ! gcloud artifacts repositories describe "$REPOSITORY" --location="$REGION" >/dev/null 2>&1; then
+            gcloud artifacts repositories create "$REPOSITORY" \
+              --repository-format=docker \
+              --location="$REGION" \
+              --description="InsuriMax Docker images"
+          fi
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          echo "REPO_PATH=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY" >> "$GITHUB_ENV"
+
+      - name: Build and push backend image
+        run: |
+          IMAGE="$REPO_PATH/backend:${GITHUB_SHA}"
+          docker build -t "$IMAGE" -t "$REPO_PATH/backend:latest" ./Backend
+          docker push "$IMAGE"
+          docker push "$REPO_PATH/backend:latest"
+          echo "BACKEND_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build and push frontend image
+        run: |
+          # VITE_DEMO_PERSONAS is deliberately not set: the demo logins must never reach a public build
+          IMAGE="$REPO_PATH/frontend:${GITHUB_SHA}"
+          docker build -t "$IMAGE" -t "$REPO_PATH/frontend:latest" ./Frontend
+          docker push "$IMAGE"
+          docker push "$REPO_PATH/frontend:latest"
+          echo "FRONTEND_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Run database migrations
+        if: github.event_name == 'push' || inputs.run_migrations
+        env:
+          DB_SSL: ${{ vars.DB_SSL || 'true' }}
+        run: |
+          DATABASE_URL="$(gcloud secrets versions access latest --secret=insurimax-database-url)"
+          echo "::add-mask::$DATABASE_URL"
+          docker run --rm \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e DB_SSL="$DB_SSL" \
+            "$BACKEND_IMAGE" \
+            alembic upgrade head
+
+      - name: Deploy backend
+        env:
+          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+          DB_SSL: ${{ vars.DB_SSL || 'true' }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          SA_FLAG=()
+          if [ -n "$RUNTIME_SA" ]; then SA_FLAG=(--service-account "$RUNTIME_SA"); fi
+          gcloud run deploy "$BACKEND_SERVICE" \
+            --image "$BACKEND_IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            "${SA_FLAG[@]}" \
+            --update-env-vars "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,DB_SSL=$DB_SSL,GCS_BUCKET_NAME=$GCS_BUCKET_NAME" \
+            --update-secrets "SECRET_KEY=insurimax-secret-key:latest,DATABASE_URL=insurimax-database-url:latest"
+          BACKEND_URL="$(gcloud run services describe "$BACKEND_SERVICE" --region "$REGION" --format='value(status.url)')"
+          echo "BACKEND_URL=$BACKEND_URL" >> "$GITHUB_ENV"
+
+      - name: Deploy frontend
+        run: |
+          gcloud run deploy "$FRONTEND_SERVICE" \
+            --image "$FRONTEND_IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --update-env-vars "VITE_API_URL=$BACKEND_URL/api/v1"
+          FRONTEND_URL="$(gcloud run services describe "$FRONTEND_SERVICE" --region "$REGION" --format='value(status.url)')"
+          echo "FRONTEND_URL=$FRONTEND_URL" >> "$GITHUB_ENV"
+
+      - name: Restrict backend CORS to the frontend
+        run: |
+          gcloud run services update "$BACKEND_SERVICE" \
+            --region "$REGION" \
+            --update-env-vars "CORS_ORIGINS=$FRONTEND_URL"
+
+      - name: Smoke test
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$BACKEND_URL/ready" >/dev/null; then echo "Backend is ready"; break; fi
+            [ "$i" = 5 ] && { echo "::error::Backend did not become ready at $BACKEND_URL/ready"; exit 1; }
+            sleep 10
+          done
+          curl -fsS "$FRONTEND_URL/healthz" >/dev/null && echo "Frontend is healthy"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to Cloud Run (${REGION})"
+            echo "- Frontend: $FRONTEND_URL"
+            echo "- Backend API: $BACKEND_URL"
+            echo "- API docs: $BACKEND_URL/docs"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
