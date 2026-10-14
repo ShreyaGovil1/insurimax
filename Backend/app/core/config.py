@@ -71,18 +71,18 @@ class Settings(BaseSettings):
         )
 
     # ── Google Cloud ──────────────────────────────────────────────────────────
-    GOOGLE_CLOUD_PROJECT: str = "your-gcp-project-id"
-    GOOGLE_CLOUD_LOCATION: str = "us-central1"
+    GOOGLE_CLOUD_PROJECT: str = "insurimax-511211"
+    GOOGLE_CLOUD_LOCATION: str = "asia-south1"
     GOOGLE_APPLICATION_CREDENTIALS: str | None = None  # path to service-account JSON
     GOOGLE_API_KEY: str | None = None  # fallback for local dev
 
     # ── GCS ───────────────────────────────────────────────────────────────────
-    GCS_BUCKET_NAME: str = "insurimax-documents"
+    GCS_BUCKET_NAME: str = "insurimax-data-01"
     GCS_SIGNED_URL_EXPIRY_MINUTES: int = 30
 
     # ── Vertex AI / Gemini ────────────────────────────────────────────────────
-    GEMINI_MODEL: str = "gemini-1.5-pro-002"
-    GEMINI_FLASH_MODEL: str = "gemini-1.5-flash-002"  # for lighter tasks
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash"  # for lighter tasks
     VERTEX_AI_ENABLED: bool = False  # True → use Vertex AI, False → use google-generativeai
 
     # ── SLA ───────────────────────────────────────────────────────────────────

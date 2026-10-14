@@ -139,12 +139,15 @@ async def get_document_signed_url(
     """
     Returns a short-lived GCS signed URL for direct browser download/preview.
     Valid for GCS_SIGNED_URL_EXPIRY_MINUTES (default 30 min).
+    Falls back to direct API content streaming endpoint if signing is unavailable.
     """
     await _authorized_document(db, claim_id, doc_id, current_user)
     result = await document_service.generate_signed_url_for_document(db, doc_id)
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     signed_url, expires_at = result
+    if not signed_url or signed_url.startswith("/local-storage/"):
+        signed_url = f"/claims/{claim_id}/documents/{doc_id}/content"
     return DocumentSignedUrl(document_id=doc_id, signed_url=signed_url, expires_at=expires_at)
 
 
@@ -215,6 +218,30 @@ async def get_document_page_image(
     except IndexError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
     return Response(content=png, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.get("/claims/{claim_id}/documents/{doc_id}/content")
+async def get_document_content(
+    claim_id: uuid.UUID,
+    doc_id: uuid.UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """
+    Directly streams document bytes from storage (GCS or local).
+    Used for safe, robust in-app preview and download.
+    """
+    doc = await _authorized_document(db, claim_id, doc_id, current_user)
+    data = await gcs.download_as_bytes(doc.gcs_object_key)
+    safe_name = doc.original_filename.encode("latin-1", "replace").decode("latin-1")
+    return Response(
+        content=data,
+        media_type=doc.mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 # ── Extraction ─────────────────────────────────────────────────────────────────

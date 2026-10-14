@@ -40,14 +40,15 @@ def _get_genai_model(model_name: str):
 
 
 @lru_cache
-def _get_vertex_model(model_name: str):
+def _get_vertex_model(model_name: str, location: str | None = None):
     """Returns a Vertex AI GenerativeModel (service-account / ADC mode)."""
     import vertexai  # type: ignore
     from vertexai.generative_models import GenerativeModel  # type: ignore
 
+    loc = location or settings.GOOGLE_CLOUD_LOCATION
     vertexai.init(
         project=settings.GOOGLE_CLOUD_PROJECT,
-        location=settings.GOOGLE_CLOUD_LOCATION,
+        location=loc,
     )
     return GenerativeModel(model_name)
 
@@ -82,7 +83,16 @@ async def generate_json(
 
         def _call() -> tuple[dict | list, int, int]:
             if settings.VERTEX_AI_ENABLED:
-                return _call_vertex(chosen_model, prompt, inline_data)
+                try:
+                    return _call_vertex(chosen_model, prompt, inline_data)
+                except Exception as exc:
+                    logger.warning("Vertex AI call failed (%s); attempting fallback", exc)
+                    if settings.GOOGLE_API_KEY:
+                        try:
+                            return _call_genai(chosen_model, prompt, inline_data)
+                        except Exception as genai_exc:
+                            logger.warning("google-generativeai fallback also failed: %s", genai_exc)
+                    raise
             else:
                 return _call_genai(chosen_model, prompt, inline_data)
 
@@ -100,33 +110,48 @@ def _call_genai(
     prompt: str,
     inline_data: list[dict] | None,
 ) -> tuple[dict | list, int, int]:
-    """google-generativeai path."""
+    """google-generativeai path with model fallback."""
     import google.generativeai as genai  # type: ignore
     from google.generativeai.types import HarmBlockThreshold, HarmCategory  # type: ignore
 
-    model = _get_genai_model(model_name)
+    candidate_models = [model_name]
+    simplified = model_name.replace("-002", "").replace("-001", "")
+    if simplified not in candidate_models:
+        candidate_models.append(simplified)
+    for fallback in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.1-flash-lite", "gemini-1.5-flash"]:
+        if fallback not in candidate_models:
+            candidate_models.append(fallback)
 
     parts: list[Any] = [prompt]
     if inline_data:
         for item in inline_data:
             parts.append({"inline_data": item})
 
-    response = model.generate_content(
-        parts,
-        safety_settings={
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        },
-    )
+    last_exc = None
+    for m_name in candidate_models:
+        try:
+            model = _get_genai_model(m_name)
+            response = model.generate_content(
+                parts,
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                },
+            )
+            text = response.text
+            parsed = _safe_parse_json(text)
 
-    text = response.text
-    parsed = _safe_parse_json(text)
+            usage = response.usage_metadata
+            prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+            completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
 
-    usage = response.usage_metadata
-    prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
-    completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
+            return parsed, prompt_tokens, completion_tokens
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("google-generativeai generation with %s failed: %s", m_name, exc)
+            continue
 
-    return parsed, prompt_tokens, completion_tokens
+    raise last_exc or RuntimeError("All google-generativeai model attempts failed")
 
 
 def _call_vertex(
@@ -134,10 +159,8 @@ def _call_vertex(
     prompt: str,
     inline_data: list[dict] | None,
 ) -> tuple[dict | list, int, int]:
-    """Vertex AI path."""
+    """Vertex AI path with model and location fallbacks."""
     from vertexai.generative_models import GenerativeModel, Part  # type: ignore
-
-    model = _get_vertex_model(model_name)
 
     parts: list[Any] = [prompt]
     if inline_data:
@@ -146,15 +169,40 @@ def _call_vertex(
                 Part.from_data(data=item["data"], mime_type=item["mime_type"])
             )
 
-    response = model.generate_content(parts)
-    text = response.text
-    parsed = _safe_parse_json(text)
+    # Models to try in order
+    candidate_models = [model_name]
+    simplified = model_name.replace("-002", "").replace("-001", "")
+    if simplified not in candidate_models:
+        candidate_models.append(simplified)
+    for fallback in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]:
+        if fallback not in candidate_models:
+            candidate_models.append(fallback)
 
-    usage = response.usage_metadata
-    prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
-    completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
+    # Locations to try: configured location first, then us-central1
+    candidate_locations = [settings.GOOGLE_CLOUD_LOCATION]
+    if "us-central1" not in candidate_locations:
+        candidate_locations.append("us-central1")
 
-    return parsed, prompt_tokens, completion_tokens
+    last_exc = None
+    for loc in candidate_locations:
+        for m_name in candidate_models:
+            try:
+                model = _get_vertex_model(m_name, loc)
+                response = model.generate_content(parts)
+                text = response.text
+                parsed = _safe_parse_json(text)
+
+                usage = response.usage_metadata
+                prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+                completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
+
+                return parsed, prompt_tokens, completion_tokens
+            except Exception as exc:
+                last_exc = exc
+                logger.warning("Vertex AI generation with %s in %s failed: %s", m_name, loc, exc)
+                continue
+
+    raise last_exc or RuntimeError("All Vertex AI generation attempts failed")
 
 
 def _safe_parse_json(text: str) -> dict | list:
