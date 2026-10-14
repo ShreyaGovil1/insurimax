@@ -25,6 +25,22 @@ logger = logging.getLogger(__name__)
 LOCAL_STORAGE_DIR = Path(__file__).resolve().parent.parent.parent / "storage_local"
 
 
+def _local_path(object_key: str) -> Path | None:
+    """
+    Map an object key to its path under LOCAL_STORAGE_DIR.
+    Returns None if the key would resolve outside LOCAL_STORAGE_DIR (e.g. '..' segments,
+    absolute paths, Windows drive or device names, embedded null bytes).
+    """
+    base = LOCAL_STORAGE_DIR.resolve()
+    try:
+        candidate = (LOCAL_STORAGE_DIR / object_key).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if candidate == base or not candidate.is_relative_to(base):
+        return None
+    return candidate
+
+
 @lru_cache
 def _get_gcs_client() -> storage.Client | None:
     """
@@ -112,7 +128,9 @@ async def upload_file(
                 logger.warning("GCS upload failed (%s); falling back to local disk storage", exc)
 
         # Local storage fallback
-        local_path = LOCAL_STORAGE_DIR / object_key
+        local_path = _local_path(object_key)
+        if local_path is None:
+            raise ValueError(f"Object key {object_key!r} resolves outside local storage")
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(file_data)
         return {
@@ -125,18 +143,30 @@ async def upload_file(
     return await loop.run_in_executor(None, _upload)
 
 
+def _safe_filename(filename: str) -> str:
+    """
+    Reduce a client-supplied filename to a single path component for an object key.
+    Any directory part (either separator) is dropped so the name cannot add or climb
+    directories; a name that is empty or only dots becomes 'file'.
+    """
+    name = filename.replace("\\", "/").rsplit("/", 1)[-1].replace(" ", "_")
+    if not name.strip("."):
+        name = "file"
+    return name
+
+
 def build_object_key(claim_id: uuid.UUID, doc_type: str, filename: str) -> str:
     """
     Build a deterministic object key.
     Pattern: claims/<claim_id>/<doc_type>/<uuid>_<filename>
     """
-    safe_filename = filename.replace(" ", "_")
+    safe_filename = _safe_filename(filename)
     unique_prefix = str(uuid.uuid4())[:8]
     return f"claims/{claim_id}/{doc_type}/{unique_prefix}_{safe_filename}"
 
 
 def build_policy_object_key(policy_id: uuid.UUID, version_id: uuid.UUID, filename: str) -> str:
-    safe_filename = filename.replace(" ", "_")
+    safe_filename = _safe_filename(filename)
     return f"policies/{policy_id}/versions/{version_id}/{safe_filename}"
 
 
@@ -150,8 +180,8 @@ async def generate_signed_url(object_key: str, expiry_minutes: int | None = None
     def _sign() -> str | None:
         # Files that fell back to local disk at upload time are not in the bucket; signing a
         # GCS URL for them would 404, so serve them inline (same order as download_as_bytes).
-        local_path = LOCAL_STORAGE_DIR / object_key
-        if local_path.exists():
+        local_path = _local_path(object_key)
+        if local_path is not None and local_path.exists():
             mime = mimetypes.guess_type(local_path.name)[0] or "application/pdf"
             b64 = base64.b64encode(local_path.read_bytes()).decode("utf-8")
             return f"data:{mime};base64,{b64}"
@@ -195,8 +225,8 @@ async def delete_object(object_key: str) -> bool:
 
     def _delete() -> bool:
         deleted = False
-        local_path = LOCAL_STORAGE_DIR / object_key
-        if local_path.exists():
+        local_path = _local_path(object_key)
+        if local_path is not None and local_path.exists():
             try:
                 local_path.unlink()
                 deleted = True
@@ -226,8 +256,8 @@ async def download_as_bytes(object_key: str) -> bytes:
 
     def _download() -> bytes:
         # Check local storage first if present
-        local_path = LOCAL_STORAGE_DIR / object_key
-        if local_path.exists():
+        local_path = _local_path(object_key)
+        if local_path is not None and local_path.exists():
             return local_path.read_bytes()
 
         bucket = _get_bucket()
@@ -245,8 +275,8 @@ async def get_object_metadata(object_key: str) -> dict | None:
     loop = asyncio.get_event_loop()
 
     def _meta() -> dict | None:
-        local_path = LOCAL_STORAGE_DIR / object_key
-        if local_path.exists():
+        local_path = _local_path(object_key)
+        if local_path is not None and local_path.exists():
             stat = local_path.stat()
             mime = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
             return {

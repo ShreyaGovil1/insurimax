@@ -120,7 +120,7 @@ DEBUG=false,\
 GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,\
 GOOGLE_CLOUD_LOCATION=$REGION,\
 VERTEX_AI_ENABLED=true,\
-SECRET_KEY=change-to-a-secure-random-32-char-string,\
+SECRET_KEY=$(openssl rand -hex 32),\
 DATABASE_URL=postgresql://user:password@aws-0-ap-south-1.pooler.supabase.com:5432/postgres,\
 DB_SSL=true,\
 CORS_ORIGINS=*"
@@ -128,6 +128,10 @@ CORS_ORIGINS=*"
 
 *For Windows PowerShell:*
 ```powershell
+# Random 32-byte JWT signing key (hex)
+$keyBytes = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($keyBytes)
+$secretKey = -join ($keyBytes | ForEach-Object { $_.ToString("x2") })
+
 gcloud run deploy insurimax-backend `
   --image "$($env:REGION)-docker.pkg.dev/$($env:GCP_PROJECT_ID)/insurimax-repo/backend:latest" `
   --region $env:REGION `
@@ -136,7 +140,7 @@ gcloud run deploy insurimax-backend `
   --memory 2Gi `
   --cpu 2 `
   --timeout 300 `
-  --set-env-vars "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$env:GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$env:REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=change-to-a-secure-random-32-char-string,DATABASE_URL=postgresql://user:password@aws-0-ap-south-1.pooler.supabase.com:5432/postgres,DB_SSL=true,CORS_ORIGINS=*"
+  --set-env-vars "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$env:GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$env:REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=$secretKey,DATABASE_URL=postgresql://user:password@aws-0-ap-south-1.pooler.supabase.com:5432/postgres,DB_SSL=true,CORS_ORIGINS=*"
 ```
 
 > **Note:** Once deployed, Google Cloud Run will output your Backend URL, for example:

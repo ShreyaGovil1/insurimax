@@ -42,7 +42,7 @@ import { citationKey } from "../documents/citations"
 import { DecisionSummaryCard } from "./DecisionSummaryCard"
 import { MoneySummary } from "./MoneySummary"
 import { LineItemsPanel } from "./LineItemsPanel"
-import { ExplanationPanel } from "./ExplanationPanel"
+import { ExplanationPanel, OverrideDialog } from "./ExplanationPanel"
 import { NextStepBar } from "./NextStepBar"
 import { AuditReportDialog } from "./AuditReportDialog"
 import { buildJourney, decisionMinutes, missingRequiredDocs, OUTCOME_FILTERS } from "./journey"
@@ -105,6 +105,13 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   const [auditReport, setAuditReport] = useState(null)
   const explanationRef = useRef(null)
   const workAreaRef = useRef(null)
+
+  // For actions outside the tab bar (e.g. "Raise a query", "Inspect the bill"): switch the tab
+  // and bring the work area into view, so the change is visible and not just a URL update.
+  const goToTab = (tab) => {
+    setActiveTab(tab)
+    requestAnimationFrame(() => workAreaRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }))
+  }
 
   const loadExplanation = async (itemId) => {
     try {
@@ -400,7 +407,9 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
   }
 
   const lineItems = useMemo(() => adjudication?.line_items || [], [adjudication])
-  const isFinalized = claim?.status === "finalized" || adjudication?.status === "finalized"
+  // The claim's status is the source of truth: an unlocked claim is back in review even if
+  // its adjudication record still says "finalized".
+  const isFinalized = claim ? claim.status === "finalized" : adjudication?.status === "finalized"
   const isDraft = claim?.status === "draft"
   const hasAdjudication = Boolean(adjudication)
   const overrideCount = lineItems.filter((li) => li.is_overridden).length
@@ -438,7 +447,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
         title: missingDocs ? `Attach the ${missingDocs.map((m) => m.label).join(" and the ")}` : "Attach the claim documents",
         detail: `${insurer} can't see this claim until you submit it. The policy document and the itemised bill are required.`,
         primary: (
-          <Button variant="proceed" onClick={() => setActiveTab("documents")}>
+          <Button variant="proceed" onClick={() => goToTab("documents")}>
             Add documents
             <ArrowRight className="h-4 w-4" />
           </Button>
@@ -475,7 +484,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
         title: `${insurer} asked ${unansweredQueries.length === 1 ? "a question" : `${unansweredQueries.length} questions`}`,
         detail: "Reply so the review can continue. The SLA clock keeps running.",
         primary: (
-          <Button variant="proceed" onClick={() => setActiveTab("queries")}>
+          <Button variant="proceed" onClick={() => goToTab("queries")}>
             Answer query
             <ArrowRight className="h-4 w-4" />
           </Button>
@@ -526,14 +535,20 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
         tone: "alert",
         icon: ShieldAlert,
         title: "Resolve the identity mismatch",
-        detail: `${mismatchSentence} Automated approval is blocked until the names match.`,
+        detail: `${mismatchSentence} Automated approval is blocked, but you can still lock the decision after reviewing it.`,
         secondary: (
-          <Button variant="secondary" onClick={() => setActiveTab("queries")}>
-            Raise a query
-          </Button>
+          <>
+            <Button variant="ghost" onClick={() => setFinalizeModalOpen(true)}>
+              <Lock className="h-4 w-4" />
+              Lock & finalize
+            </Button>
+            <Button variant="secondary" onClick={() => goToTab("queries")}>
+              Raise a query
+            </Button>
+          </>
         ),
         primary: (
-          <Button variant="proceed" onClick={() => setActiveTab("documents")}>
+          <Button variant="proceed" onClick={() => goToTab("documents")}>
             Inspect the bill
             <ArrowRight className="h-4 w-4" />
           </Button>
@@ -562,7 +577,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
         title: "Waiting on the hospital's reply",
         detail: `${unansweredQueries.length} open quer${unansweredQueries.length === 1 ? "y" : "ies"}. You can still lock the decision if the answer won't change it.`,
         secondary: (
-          <Button variant="secondary" onClick={() => setActiveTab("queries")}>
+          <Button variant="secondary" onClick={() => goToTab("queries")}>
             View queries
           </Button>
         ),
@@ -707,7 +722,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
               </p>
             </div>
           </div>
-          <Button size="sm" variant="danger-soft" onClick={() => setActiveTab("documents")} className="shrink-0">
+          <Button size="sm" variant="danger-soft" onClick={() => goToTab("documents")} className="shrink-0">
             <FileText className="h-3.5 w-3.5" />
             Inspect bill
           </Button>
@@ -805,11 +820,7 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
                         onPrev={selectedIdx > 0 ? () => handleSelectItem(visibleItems[selectedIdx - 1]) : null}
                         onNext={selectedIdx >= 0 && selectedIdx < visibleItems.length - 1 ? () => handleSelectItem(visibleItems[selectedIdx + 1]) : null}
                         canOverride={isInsurer && !isFinalized}
-                        overriding={overridingId === selectedItemId}
                         onStartOverride={startOverride}
-                        onCancelOverride={() => setOverridingId(null)}
-                        onSubmitOverride={handleSubmitOverride}
-                        claimApprovedTotal={adjudication?.total_approved_inr}
                         activeCitation={activeCitation?.citation}
                         onOpenCitation={setActiveCitation}
                         isHospital={isHospital}
@@ -924,6 +935,14 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
         </DialogContent>
       </Dialog>
 
+      {/* Override one line item's AI decision */}
+      <OverrideDialog
+        item={isInsurer && !isFinalized ? lineItems.find((li) => li.id === overridingId) || null : null}
+        claimApprovedTotal={adjudication?.total_approved_inr}
+        onCancel={() => setOverridingId(null)}
+        onSubmit={handleSubmitOverride}
+      />
+
       {/* Lock & finalize */}
       <Dialog open={finalizeModalOpen} onOpenChange={setFinalizeModalOpen}>
         <DialogContent onClose={() => setFinalizeModalOpen(false)}>
@@ -952,6 +971,13 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
                 <dd className="figures mt-0.5 text-body font-semibold text-ink">{overrideCount}</dd>
               </div>
             </dl>
+
+            {mismatchFlag && (
+              <p className="rounded-xl bg-vermilion-50 px-3.5 py-2.5 text-small text-vermilion-800 ring-1 ring-inset ring-vermilion-200">
+                The bill's patient name doesn't match the registered claimant. Locking records your sign-off on this decision
+                despite the mismatch. Note the reason in the remarks.
+              </p>
+            )}
 
             {flaggedItems.length > 0 && (
               <p className="rounded-xl bg-marigold-50 px-3.5 py-2.5 text-small text-marigold-800 ring-1 ring-inset ring-marigold-200">

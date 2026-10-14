@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { Activity, Check, ChevronDown, FileStack, Inbox, LogIn, LogOut, Plus, SearchCheck, Settings, Loader2 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
+import { DEMO_PERSONAS_ENABLED } from "../../services/api"
 import { useToast } from "../ui/toast"
 import { Button } from "../ui/button"
 import { Avatar } from "../ui/avatar"
@@ -191,35 +192,39 @@ export function Header({ currentView, onViewChange, onNewClaim }) {
                     </div>
                   </div>
                   <div className="my-1 h-px bg-line" />
-                  <div className="px-2.5 pb-1 pt-2 text-tiny font-semibold text-ink-3">Switch demo persona</div>
-                  {ROLE_OPTIONS.map((opt) => {
-                    const current = user.role === opt.key
-                    return (
-                      <button
-                        key={opt.key}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={current}
-                        disabled={Boolean(switching)}
-                        onClick={() => handleSwitch(opt.key)}
-                        className={cn(
-                          "flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-ground disabled:cursor-wait",
-                          current && "bg-peacock-50 hover:bg-peacock-50"
-                        )}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className={cn("block text-sm font-semibold", current ? "text-peacock-700" : "text-ink")}>{opt.label}</span>
-                          <span className="block text-tiny text-ink-3">{opt.hint}</span>
-                        </span>
-                        {switching === opt.key ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-ink-3" />
-                        ) : current ? (
-                          <Check className="h-4 w-4 text-peacock-600" strokeWidth={2.5} />
-                        ) : null}
-                      </button>
-                    )
-                  })}
-                  <div className="my-1 h-px bg-line" />
+                  {DEMO_PERSONAS_ENABLED && (
+                    <>
+                      <div className="px-2.5 pb-1 pt-2 text-tiny font-semibold text-ink-3">Switch demo persona</div>
+                      {ROLE_OPTIONS.map((opt) => {
+                        const current = user.role === opt.key
+                        return (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={current}
+                            disabled={Boolean(switching)}
+                            onClick={() => handleSwitch(opt.key)}
+                            className={cn(
+                              "flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-ground disabled:cursor-wait",
+                              current && "bg-peacock-50 hover:bg-peacock-50"
+                            )}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className={cn("block text-sm font-semibold", current ? "text-peacock-700" : "text-ink")}>{opt.label}</span>
+                              <span className="block text-tiny text-ink-3">{opt.hint}</span>
+                            </span>
+                            {switching === opt.key ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-ink-3" />
+                            ) : current ? (
+                              <Check className="h-4 w-4 text-peacock-600" strokeWidth={2.5} />
+                            ) : null}
+                          </button>
+                        )
+                      })}
+                      <div className="my-1 h-px bg-line" />
+                    </>
+                  )}
                   <button
                     type="button"
                     role="menuitem"

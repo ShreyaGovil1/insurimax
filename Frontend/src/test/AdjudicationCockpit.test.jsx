@@ -1,6 +1,6 @@
 import React from "react"
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { AdjudicationCockpit } from "../components/adjudication/AdjudicationCockpit"
 import { ToastProvider } from "../components/ui/toast"
@@ -106,6 +106,101 @@ describe("AdjudicationCockpit Component", () => {
     expect(screen.getByText(/CLM-2026-8821/i)).toBeInTheDocument()
     expect(screen.getByText(/Ramesh Chawla/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Laparoscopic Cholecystectomy Surgeon Fee/i).length).toBeGreaterThan(0)
+  })
+
+  it("lets the adjuster lock and finalize despite an identity mismatch", async () => {
+    const adjuster = { id: "u-1", role: "adjuster", full_name: "Test Adjuster", email: "adjuster@example.com" }
+    localStorage.setItem("dp_access_token", "test-token")
+    localStorage.setItem("dp_user", JSON.stringify(adjuster))
+    vi.spyOn(api.auth, "getMe").mockResolvedValue(adjuster)
+    vi.spyOn(api.adjudication, "get").mockResolvedValue({
+      ...mockAdjudication,
+      gemini_raw_response: {
+        flags: ["CRITICAL IDENTITY MISMATCH: Patient name on hospital bill ('R. Sharma') does not match the registered claimant ('Ramesh Chawla')"],
+      },
+    })
+
+    try {
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <ToastProvider>
+              <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
+            </ToastProvider>
+          </AuthProvider>
+        </MemoryRouter>
+      )
+
+      expect(await screen.findByText("Resolve the identity mismatch")).toBeInTheDocument()
+      fireEvent.click(screen.getByRole("button", { name: /Lock & finalize/i }))
+      expect(await screen.findByText("Lock and finalize this decision?")).toBeInTheDocument()
+      expect(screen.getByText(/despite the mismatch/i)).toBeInTheDocument()
+    } finally {
+      localStorage.clear()
+    }
+  })
+
+  it("treats an unlocked claim as in review even if its adjudication still says finalized", async () => {
+    const adjuster = { id: "u-1", role: "adjuster", full_name: "Test Adjuster", email: "adjuster@example.com" }
+    localStorage.setItem("dp_access_token", "test-token")
+    localStorage.setItem("dp_user", JSON.stringify(adjuster))
+    vi.spyOn(api.auth, "getMe").mockResolvedValue(adjuster)
+    vi.spyOn(api.adjudication, "get").mockResolvedValue({ ...mockAdjudication, status: "finalized" })
+
+    try {
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <ToastProvider>
+              <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
+            </ToastProvider>
+          </AuthProvider>
+        </MemoryRouter>
+      )
+
+      expect(await screen.findByText("Decision ready to lock")).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /Unlock for re-audit/i })).not.toBeInTheDocument()
+    } finally {
+      localStorage.clear()
+    }
+  })
+
+  it("opens the override as a pop-up and scrolls to the queries when 'Raise a query' is clicked", async () => {
+    const adjuster = { id: "u-1", role: "adjuster", full_name: "Test Adjuster", email: "adjuster@example.com" }
+    localStorage.setItem("dp_access_token", "test-token")
+    localStorage.setItem("dp_user", JSON.stringify(adjuster))
+    vi.spyOn(api.auth, "getMe").mockResolvedValue(adjuster)
+    vi.spyOn(api.adjudication, "get").mockResolvedValue({
+      ...mockAdjudication,
+      gemini_raw_response: { flags: ["CRITICAL IDENTITY MISMATCH: bill patient differs from the registered claimant"] },
+    })
+    const scrollIntoView = vi.fn()
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollIntoView
+
+    try {
+      render(
+        <MemoryRouter>
+          <AuthProvider>
+            <ToastProvider>
+              <AdjudicationCockpit claimId="88888888-8888-8888-8888-888888888881" onBack={() => {}} />
+            </ToastProvider>
+          </AuthProvider>
+        </MemoryRouter>
+      )
+
+      fireEvent.click(await screen.findByRole("button", { name: /Override this decision/i }))
+      const dialog = await screen.findByRole("dialog")
+      expect(within(dialog).getByText("Override the AI decision")).toBeInTheDocument()
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+      scrollIntoView.mockClear()
+      fireEvent.click(screen.getByRole("button", { name: /Raise a query/i }))
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    } finally {
+      Element.prototype.scrollIntoView = original
+      localStorage.clear()
+    }
   })
 
   it("displays policy citation panel with clause references", async () => {

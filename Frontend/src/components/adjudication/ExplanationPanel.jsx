@@ -6,6 +6,7 @@ import { Input } from "../ui/input"
 import { Select } from "../ui/select"
 import { Textarea } from "../ui/textarea"
 import { Field } from "../ui/field"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog"
 import { DecisionPill } from "../common/status"
 import { CitationButton } from "../documents/CitationViewer"
 import { OVERRIDE_REASON_LABELS } from "./journey"
@@ -20,7 +21,7 @@ const DECISIONS = [
 
 /**
  * Right-hand panel: the AI's reasoning for one line item, the policy text it relied on,
- * where the item sits on the bill, and (for the insurer) an inline override.
+ * where the item sits on the bill, and (for the insurer) the entry point to override it.
  */
 export function ExplanationPanel({
   item,
@@ -30,11 +31,7 @@ export function ExplanationPanel({
   onPrev,
   onNext,
   canOverride,
-  overriding,
   onStartOverride,
-  onCancelOverride,
-  onSubmitOverride,
-  claimApprovedTotal,
   activeCitation,
   onOpenCitation,
   isHospital,
@@ -173,7 +170,7 @@ export function ExplanationPanel({
           )}
         </div>
 
-        {item.is_overridden && !overriding && (
+        {item.is_overridden && (
           <div className="rounded-xl bg-sand-50 p-4 ring-1 ring-inset ring-sand-200">
             <div className="flex items-center gap-1.5 text-small font-semibold text-sand-800">
               <PenLine className="h-4 w-4" />
@@ -183,21 +180,12 @@ export function ExplanationPanel({
           </div>
         )}
 
-        {canOverride &&
-          (overriding ? (
-            <OverrideForm
-              key={item.id}
-              item={item}
-              claimApprovedTotal={claimApprovedTotal}
-              onCancel={onCancelOverride}
-              onSubmit={onSubmitOverride}
-            />
-          ) : (
-            <Button variant="secondary" className="w-full" onClick={() => onStartOverride(item)}>
-              <PenLine className="h-4 w-4" />
-              {item.is_overridden ? "Change this override" : "Override this decision"}
-            </Button>
-          ))}
+        {canOverride && (
+          <Button variant="secondary" className="w-full" onClick={() => onStartOverride(item)}>
+            <PenLine className="h-4 w-4" />
+            {item.is_overridden ? "Change this override" : "Override this decision"}
+          </Button>
+        )}
       </div>
     </section>
   )
@@ -209,6 +197,36 @@ function AmountCell({ label, value, tone = "text-ink" }) {
       <dt className="text-tiny font-medium text-ink-3">{label}</dt>
       <dd className={cn("figures mt-0.5 text-body font-semibold", tone)}>{formatCurrencyINR(value)}</dd>
     </div>
+  )
+}
+
+/**
+ * Pop-up for overriding one line item's AI decision. `item` is the line being overridden;
+ * the dialog is open while it is set. The last item is kept through the closing animation.
+ */
+export function OverrideDialog({ item, claimApprovedTotal, onCancel, onSubmit }) {
+  const [shown, setShown] = useState(item)
+  if (item && item !== shown) setShown(item)
+
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent onClose={onCancel}>
+        {shown && (
+          <>
+            <DialogHeader>
+              <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-peacock-50 text-peacock-600">
+                <PenLine className="h-5 w-5" />
+              </div>
+              <DialogTitle>Override the AI decision</DialogTitle>
+              <DialogDescription>
+                Line {shown.line_number}: {shown.item_name}
+              </DialogDescription>
+            </DialogHeader>
+            <OverrideForm key={shown.id} item={shown} claimApprovedTotal={claimApprovedTotal} onCancel={onCancel} onSubmit={onSubmit} />
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -250,12 +268,7 @@ function OverrideForm({ item, claimApprovedTotal, onCancel, onSubmit }) {
   }
 
   return (
-    <form onSubmit={submit} className="animate-rise space-y-4 rounded-xl p-4 ring-2 ring-peacock-200" noValidate>
-      <div className="flex items-center gap-1.5 text-small font-semibold text-peacock-800">
-        <PenLine className="h-4 w-4" />
-        Override the AI decision
-      </div>
-
+    <form onSubmit={submit} className="space-y-4" noValidate>
       <fieldset>
         <legend className="mb-1.5 text-small font-semibold text-ink-2">New decision</legend>
         <div className="flex flex-wrap gap-1.5" role="radiogroup">
