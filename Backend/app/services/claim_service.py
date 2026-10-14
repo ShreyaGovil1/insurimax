@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.gcp import storage as gcs
 from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
-from app.models.adjudication import AdjudicationResult
+from app.models.adjudication import AdjudicationResult, AdjudicationStatus
 from app.schemas.claim import ClaimCreate, ClaimStatusUpdate
 
 
@@ -146,6 +146,19 @@ async def update_claim_status(
 
     old_status = claim.status
     claim.status = update_data.status
+
+    # Unlocking a finalized claim (e.g. for re-audit) reopens its adjudication too,
+    # otherwise the decision stays locked even though the claim is back in review.
+    if old_status == ClaimStatus.FINALIZED and update_data.status != ClaimStatus.FINALIZED:
+        claim.finalized_at = None
+        adj_result = await db.execute(
+            select(AdjudicationResult).where(AdjudicationResult.claim_id == claim.id)
+        )
+        adj = adj_result.scalar_one_or_none()
+        if adj and adj.status == AdjudicationStatus.FINALIZED:
+            adj.status = AdjudicationStatus.COMPLETED
+            adj.finalized_by_id = None
+            adj.finalized_at = None
 
     history = ClaimStatusHistory(
         claim_id=claim.id,

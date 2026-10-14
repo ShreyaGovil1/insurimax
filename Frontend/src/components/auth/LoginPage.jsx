@@ -15,7 +15,7 @@ const FACTS = [
   { value: "<30 min", label: "Avg. adjudication time" },
   { value: "97.2%", label: "SLA compliance rate" },
   { value: "94%", label: "AI confidence avg." },
-  { value: "Gemini 1.5 Pro", label: "Multimodal AI engine" },
+  { value: "Gemini", label: "Multimodal AI engine" },
 ]
 
 // An illustrative claim travelling the route on the welcome panel

@@ -23,7 +23,7 @@ const shortDate = (iso) => {
  */
 export function buildJourney({ claim, adjudication, docs, hasMismatch }) {
   const isDraft = claim?.status === "draft"
-  const isFinalized = claim?.status === "finalized" || adjudication?.status === "finalized"
+  const isFinalized = claim ? claim.status === "finalized" : adjudication?.status === "finalized"
   const missing = missingRequiredDocs(docs)
   const docsReady = Array.isArray(missing) && missing.length === 0
 
