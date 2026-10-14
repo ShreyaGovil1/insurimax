@@ -12,7 +12,11 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.middleware import DBQueryLoggerMiddleware, TimingMiddleware
+from app.core.security import ensure_secret_key_is_secure
 from app.core.telemetry import setup_telemetry
+
+# Refuse to start the API with a missing, published or short JWT signing key.
+ensure_secret_key_is_secure()
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(

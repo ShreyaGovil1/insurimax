@@ -5,7 +5,7 @@ import { useAuth } from "../../context/AuthContext"
 import { Button } from "../ui/button"
 import { Input } from "../ui/input"
 import { Avatar } from "../ui/avatar"
-import { DEMO_CREDENTIALS } from "../../services/api"
+import { DEMO_CREDENTIALS, DEMO_PERSONAS_ENABLED } from "../../services/api"
 import { BrandLockup } from "../common/BrandMark"
 import { Guilloche } from "../common/Guilloche"
 import { JourneyRail } from "../common/JourneyRail"
@@ -224,53 +224,55 @@ export function LoginPage({ onLogin }) {
             </div>
           </div>
 
-          <div className="mt-8">
-            <div className="flex items-center gap-3 text-small font-medium text-ink-3">
-              <span className="h-px flex-1 bg-line" />
-              or fill in a demo persona
-              <span className="h-px flex-1 bg-line" />
-            </div>
-            <div className="mt-4 grid gap-2.5">
-              {PERSONAS.map((p) => {
-                const cred = DEMO_CREDENTIALS[p.key]
-                const personName = cred?.name?.replace(/\s*\(.*\)$/, "")
-                const selected = persona === p.key
-                return (
-                  <button
-                    key={p.key}
-                    type="button"
-                    onClick={() => handleDemoFill(p.key)}
-                    aria-pressed={selected}
-                    className={cn(
-                      "group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-surface p-3 text-left shadow-card transition-[box-shadow,transform] duration-150 hover:shadow-raised active:scale-[0.99]",
-                      selected && "ring-2 ring-peacock-500"
-                    )}
-                  >
-                    <Avatar name={personName} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-ink">{p.title}</span>
-                      <span className="block truncate text-small text-ink-3">
-                        {personName} · {p.desc}
-                      </span>
-                    </span>
-                    <span
+          {DEMO_PERSONAS_ENABLED && (
+            <div className="mt-8">
+              <div className="flex items-center gap-3 text-small font-medium text-ink-3">
+                <span className="h-px flex-1 bg-line" />
+                or fill in a demo persona
+                <span className="h-px flex-1 bg-line" />
+              </div>
+              <div className="mt-4 grid gap-2.5">
+                {PERSONAS.map((p) => {
+                  const cred = DEMO_CREDENTIALS[p.key]
+                  const personName = cred?.name?.replace(/\s*\(.*\)$/, "")
+                  const selected = persona === p.key
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => handleDemoFill(p.key)}
+                      aria-pressed={selected}
                       className={cn(
-                        "text-tiny font-semibold transition-colors",
-                        selected ? "text-peacock-600" : "text-ink-3 group-hover:text-ink-2"
+                        "group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-surface p-3 text-left shadow-card transition-[box-shadow,transform] duration-150 hover:shadow-raised active:scale-[0.99]",
+                        selected && "ring-2 ring-peacock-500"
                       )}
                     >
-                      {selected ? "Filled in" : "Use"}
-                    </span>
-                  </button>
-                )
-              })}
+                      <Avatar name={personName} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-ink">{p.title}</span>
+                        <span className="block truncate text-small text-ink-3">
+                          {personName} · {p.desc}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "text-tiny font-semibold transition-colors",
+                          selected ? "text-peacock-600" : "text-ink-3 group-hover:text-ink-2"
+                        )}
+                      >
+                        {selected ? "Filled in" : "Use"}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              {persona && (
+                <p className="mt-3 animate-fade-in text-small text-ink-3">
+                  Details filled in. Press <span className="font-semibold text-ink-2">Sign in</span> to open the workspace.
+                </p>
+              )}
             </div>
-            {persona && (
-              <p className="mt-3 animate-fade-in text-small text-ink-3">
-                Details filled in. Press <span className="font-semibold text-ink-2">Sign in</span> to open the workspace.
-              </p>
-            )}
-          </div>
+          )}
         </div>
       </section>
     </div>

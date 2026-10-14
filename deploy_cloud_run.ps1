@@ -17,10 +17,19 @@ param(
     [string]$DatabaseUrl = "",
 
     [Parameter(Mandatory=$false)]
-    [string]$SecretKey = "insurimax-production-secret-key-$(Get-Random)"
+    [string]$SecretKey = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $SecretKey) {
+    # Cryptographically random 32-byte JWT signing key, hex-encoded (Get-Random is guessable)
+    $keyBytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($keyBytes)
+    $rng.Dispose()
+    $SecretKey = -join ($keyBytes | ForEach-Object { $_.ToString("x2") })
+}
 
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "  InsuriMax Google Cloud Run Deployment  " -ForegroundColor Cyan

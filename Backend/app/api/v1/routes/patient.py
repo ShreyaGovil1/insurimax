@@ -13,14 +13,16 @@ import re
 import uuid
 from typing import Dict, Any, List, Optional
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 import app.models  # noqa: F401 - ensure all ORM relationships are registered
-from app.core.deps import DBSession
+from app.core.access import STAFF_ROLES, insurer_scope
+from app.core.deps import CurrentUser, DBSession
 from app.models.claim import Claim, ClaimStatus
+from app.models.user import UserRole
 from app.services import claim_service
 from app.services.bima_bharosa_service import (
     BIMA_BHAROSA_PORTAL_URL,
@@ -75,17 +77,26 @@ def _claim_dict(claim: Claim) -> dict:
 @router.get("/claims/recent")
 async def get_recent_patient_claims(
     db: DBSession,
-    limit: int = 4,
+    current_user: CurrentUser,
+    limit: int = Query(4, ge=1, le=20),
 ):
     """
-    Returns a list of recent active claims with sanitized minimal fields for patient search suggestions.
+    Returns a short list of recent active claims for search suggestions.
+    Requires sign-in and is scoped like GET /claims: hospital desk sees only its own
+    hospital's claims, insurer-side staff only their insurer's.
     """
-    stmt = (
-        select(Claim)
-        .where(Claim.status != ClaimStatus.DRAFT)
-        .order_by(Claim.created_at.desc())
-        .limit(limit)
-    )
+    stmt = select(Claim).where(Claim.status != ClaimStatus.DRAFT)
+    if current_user.role == UserRole.HOSPITAL_DESK:
+        if current_user.org_id is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not linked to a hospital organization")
+        stmt = stmt.where(Claim.hospital_org_id == current_user.org_id)
+    elif current_user.role in STAFF_ROLES:
+        insurer_org_id = await insurer_scope(db, current_user)
+        if insurer_org_id:
+            stmt = stmt.where(Claim.insurer_org_id == insurer_org_id)
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not allowed to list claims")
+    stmt = stmt.order_by(Claim.created_at.desc()).limit(limit)
     res = await db.execute(stmt)
     claims = res.scalars().all()
     return [

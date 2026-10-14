@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # ── Security ─────────────────────────────────────────────────────────────
-    SECRET_KEY: str = Field(default="change-me-in-production-use-a-long-random-string")
+    # No usable default: must come from the environment / .env. The API refuses to
+    # start without a strong key (app.core.security.ensure_secret_key_is_secure).
+    SECRET_KEY: str = Field(default="")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7

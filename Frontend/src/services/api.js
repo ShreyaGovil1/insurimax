@@ -115,7 +115,12 @@ async function apiBlobUrl(endpoint, { method = "GET", body } = {}) {
 }
 
 // ── Seed User Credentials Reference for Demo Personas ─────────────────────────
-export const DEMO_CREDENTIALS = {
+// These sign in to real seeded backend accounts, so they exist only on the Vite
+// dev server and in tests. `vite build` replaces import.meta.env.DEV with
+// `false`, which drops this object literal from the production bundle as dead
+// code and leaves DEMO_CREDENTIALS empty (no login-page fill, no persona switch).
+export const DEMO_PERSONAS_ENABLED = import.meta.env.DEV === true
+export const DEMO_CREDENTIALS = !import.meta.env.DEV ? {} : {
   adjuster: {
     email: "adjuster@insurimax.com",
     password: "Password@123",

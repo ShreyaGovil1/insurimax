@@ -46,7 +46,7 @@ REPO_PATH="$REGION-docker.pkg.dev/$PROJECT_ID/insurimax-repo"
 echo -e "\n[4/5] Building & Deploying Backend..."
 gcloud builds submit ./Backend --tag "$REPO_PATH/backend:latest"
 
-BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=prod-secret-$(date +%s),CORS_ORIGINS=*,DB_SSL=true"
+BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=$(openssl rand -hex 32),CORS_ORIGINS=*,DB_SSL=true"
 if [[ -n "$DATABASE_URL" ]]; then
   BACKEND_ENV="$BACKEND_ENV,DATABASE_URL=$DATABASE_URL"
 fi

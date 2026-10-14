@@ -32,6 +32,19 @@ describe("API Client & Services", () => {
     expect(DEMO_CREDENTIALS.hospital_desk.role).toBe("hospital_desk")
   })
 
+  it("exposes no persona credentials outside the dev server", async () => {
+    vi.stubEnv("DEV", false)
+    vi.resetModules()
+    try {
+      const prodApi = await import("../services/api")
+      expect(prodApi.DEMO_PERSONAS_ENABLED).toBe(false)
+      expect(prodApi.DEMO_CREDENTIALS).toEqual({})
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
   it("fetches claims queue with proper schema objects via API", async () => {
     const mockQueue = [
       {

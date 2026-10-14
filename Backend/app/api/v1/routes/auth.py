@@ -10,13 +10,14 @@ GET    /users/{userId}
 PATCH  /users/{userId}/role
 """
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from jose import JWTError
 
-from app.core.deps import CurrentUser, DBSession
+from app.core.deps import CurrentUser, DBSession, require_roles
 from app.core.security import decode_token
-from app.models.user import UserRole
+from app.models.user import User, UserRole
 from app.schemas.common import MessageResponse
 from app.schemas.user import (
     LoginRequest,
@@ -49,8 +50,8 @@ async def register(body: RegisterRequest, db: DBSession):
 
     - Role defaults to `adjuster`; users cannot self-assign admin/senior roles.
     - Optionally supply `org_id` to join an existing organisation.
-    - To create a brand-new organisation at the same time, use
-      `POST /auth/register-org` instead.
+    - New organisations are onboarded by a platform admin via
+      `POST /auth/register-org` (admin only).
     """
     from app.schemas.user import UserCreate
 
@@ -133,10 +134,17 @@ async def get_me(current_user: CurrentUser):
     response_model=dict,
     status_code=status.HTTP_201_CREATED,
 )
-async def register_org(body: RegisterOrgRequest, db: DBSession):
+async def register_org(
+    body: RegisterOrgRequest,
+    db: DBSession,
+    _admin: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+):
     """
     Onboard a new TPA / hospital organisation and its first admin user.
-    Returns org details + auth tokens so the admin is immediately signed in.
+    Returns org details + auth tokens for the new admin.
+
+    Restricted to existing platform admins: the new user is created with the
+    platform-wide ADMIN role, so this must never be reachable anonymously.
     """
     try:
         org, user = await user_service.register_org_with_admin(db, body)
