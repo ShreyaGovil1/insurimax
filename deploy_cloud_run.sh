@@ -2,22 +2,38 @@
 set -euo pipefail
 
 # InsuriMax Google Cloud Run Deployment Script
-# Usage: ./deploy_cloud_run.sh <PROJECT_ID> [REGION] [DATABASE_URL]
+# Usage: ./deploy_cloud_run.sh [PROJECT_ID] [REGION] [DATABASE_URL]
 
-PROJECT_ID="${1:-}"
-REGION="${2:-us-central1}"
+PROJECT_ID="${1:-insurimax-511211}"
+REGION="${2:-asia-south1}"
 DATABASE_URL="${3:-}"
 
-if [[ -z "$PROJECT_ID" ]]; then
-  echo "Usage: ./deploy_cloud_run.sh <GCP_PROJECT_ID> [REGION] [DATABASE_URL]"
-  exit 1
+# Load defaults from Backend/.env if available
+ENV_FILE="$(dirname "$0")/Backend/.env"
+GCS_BUCKET_NAME="insurimax-data-01"
+GOOGLE_API_KEY=""
+GEMINI_MODEL="gemini-1.5-pro-002"
+GEMINI_FLASH_MODEL="gemini-1.5-flash-002"
+
+if [[ -f "$ENV_FILE" ]]; then
+  echo "Reading defaults from Backend/.env..."
+  while IFS='=' read -r key val || [[ -n "$key" ]]; do
+    key=$(echo "$key" | tr -d '[:space:]')
+    val=$(echo "$val" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+    [[ "$key" =~ ^#.* ]] && continue
+    [[ -z "$key" ]] && continue
+    if [[ "$key" == "DATABASE_URL" && -z "$DATABASE_URL" ]]; then DATABASE_URL="$val"; fi
+    if [[ "$key" == "GCS_BUCKET_NAME" ]]; then GCS_BUCKET_NAME="$val"; fi
+    if [[ "$key" == "GOOGLE_API_KEY" ]]; then GOOGLE_API_KEY="$val"; fi
+  done < "$ENV_FILE"
 fi
 
 echo "========================================="
 echo "  InsuriMax Google Cloud Run Deployment  "
 echo "========================================="
-echo "Project ID : $PROJECT_ID"
-echo "Region     : $REGION"
+echo "Project ID  : $PROJECT_ID"
+echo "Region      : $REGION"
+echo "GCS Bucket  : $GCS_BUCKET_NAME"
 
 # 1. Set Project
 echo -e "\n[1/5] Configuring gcloud project..."
@@ -33,7 +49,7 @@ gcloud services enable \
 
 # 3. Create Artifact Registry repository if missing
 echo -e "\n[3/5] Setting up Artifact Registry repository 'insurimax-repo'..."
-if ! gcloud artifacts repositories describe insurimax-repo --location="$REGION" &>/dev/null; then
+if ! gcloud artifacts repositories list --location="$REGION" --format="value(name)" --filter="name:insurimax-repo" | grep -q "insurimax-repo"; then
   gcloud artifacts repositories create insurimax-repo \
     --repository-format=docker \
     --location="$REGION" \
@@ -46,9 +62,12 @@ REPO_PATH="$REGION-docker.pkg.dev/$PROJECT_ID/insurimax-repo"
 echo -e "\n[4/5] Building & Deploying Backend..."
 gcloud builds submit ./Backend --tag "$REPO_PATH/backend:latest"
 
-BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=prod-secret-$(date +%s),CORS_ORIGINS=*,DB_SSL=true"
+BACKEND_ENV="ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=prod-secret-$(date +%s),CORS_ORIGINS=*,DB_SSL=true,GCS_BUCKET_NAME=$GCS_BUCKET_NAME,GEMINI_MODEL=$GEMINI_MODEL,GEMINI_FLASH_MODEL=$GEMINI_FLASH_MODEL"
 if [[ -n "$DATABASE_URL" ]]; then
   BACKEND_ENV="$BACKEND_ENV,DATABASE_URL=$DATABASE_URL"
+fi
+if [[ -n "$GOOGLE_API_KEY" ]]; then
+  BACKEND_ENV="$BACKEND_ENV,GOOGLE_API_KEY=$GOOGLE_API_KEY"
 fi
 
 gcloud run deploy insurimax-backend \
@@ -58,6 +77,7 @@ gcloud run deploy insurimax-backend \
   --allow-unauthenticated \
   --memory 2Gi \
   --cpu 2 \
+  --timeout 300 \
   --set-env-vars "$BACKEND_ENV"
 
 BACKEND_URL="$(gcloud run services describe insurimax-backend --region "$REGION" --format="value(status.url)")"
@@ -82,7 +102,7 @@ FRONTEND_URL="$(gcloud run services describe insurimax-frontend --region "$REGIO
 echo -e "\nRestricting Backend CORS to $FRONTEND_URL..."
 gcloud run services update insurimax-backend \
   --region "$REGION" \
-  --update-env-vars "CORS_ORIGINS=$FRONTEND_URL"
+  --update-env-vars "CORS_ORIGINS=$FRONTEND_URL,http://localhost:5173,http://localhost:3000"
 
 echo -e "\n========================================================"
 echo " 🎉 Deployment Complete!"

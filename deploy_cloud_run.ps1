@@ -4,20 +4,14 @@
 .DESCRIPTION
     Builds and deploys Backend and Frontend images to Google Cloud Run using Google Cloud Build.
 .EXAMPLE
-    .\deploy_cloud_run.ps1 -ProjectId "my-gcp-project-123" -Region "us-central1" -DatabaseUrl "postgresql://user:pass@host:5432/db"
+    .\deploy_cloud_run.ps1
 #>
 param(
-    [Parameter(Mandatory=$true, HelpMessage="Your Google Cloud Project ID")]
-    [string]$ProjectId,
+    [Parameter(Mandatory=$false)]
+    [string]$ProjectId = "insurimax-511211",
 
     [Parameter(Mandatory=$false)]
-    [string]$Region = "us-central1",
-
-    [Parameter(Mandatory=$false)]
-    [string]$DatabaseUrl = "",
-
-    [Parameter(Mandatory=$false)]
-    [string]$SecretKey = "insurimax-production-secret-key-$(Get-Random)"
+    [string]$Region = "asia-south1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,8 +19,8 @@ $ErrorActionPreference = "Stop"
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "  InsuriMax Google Cloud Run Deployment  " -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "Project ID : $ProjectId"
-Write-Host "Region     : $Region"
+Write-Host "Project ID   : $ProjectId"
+Write-Host "Region       : $Region"
 
 # 1. Configure Project
 Write-Host "`n[1/5] Configuring gcloud project..." -ForegroundColor Yellow
@@ -42,9 +36,9 @@ gcloud services enable `
 
 # 3. Create Artifact Registry repository if not exists
 Write-Host "`n[3/5] Checking Artifact Registry repository 'insurimax-repo'..." -ForegroundColor Yellow
-$repoExists = gcloud artifacts repositories describe insurimax-repo --location=$Region 2>$null
-if (-not $repoExists) {
-    Write-Host "Creating repository..."
+$repoList = gcloud artifacts repositories list --location=$Region --format="value(name)" --filter="name:insurimax-repo"
+if (-not $repoList) {
+    Write-Host "Creating Artifact Registry repository 'insurimax-repo' in $Region..."
     gcloud artifacts repositories create insurimax-repo `
         --repository-format=docker `
         --location=$Region `
@@ -54,15 +48,11 @@ if (-not $repoExists) {
 }
 
 $repoPath = "$Region-docker.pkg.dev/$ProjectId/insurimax-repo"
+$envYamlPath = Join-Path $PSScriptRoot "Backend\env.cloudrun.yaml"
 
 # 4. Build & Deploy Backend
 Write-Host "`n[4/5] Building & Deploying Backend to Cloud Run..." -ForegroundColor Yellow
 gcloud builds submit ./Backend --tag "$repoPath/backend:latest"
-
-$backendEnvVars = "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$ProjectId,GOOGLE_CLOUD_LOCATION=$Region,VERTEX_AI_ENABLED=true,SECRET_KEY=$SecretKey,CORS_ORIGINS=*,DB_SSL=true"
-if ($DatabaseUrl) {
-    $backendEnvVars += ",DATABASE_URL=$DatabaseUrl"
-}
 
 gcloud run deploy insurimax-backend `
     --image "$repoPath/backend:latest" `
@@ -71,7 +61,8 @@ gcloud run deploy insurimax-backend `
     --allow-unauthenticated `
     --memory 2Gi `
     --cpu 2 `
-    --set-env-vars $backendEnvVars
+    --timeout 300 `
+    --env-vars-file "$envYamlPath"
 
 $backendUrl = gcloud run services describe insurimax-backend --region $Region --format="value(status.url)"
 Write-Host "`nBackend successfully deployed at: $backendUrl" -ForegroundColor Green
@@ -92,15 +83,15 @@ gcloud run deploy insurimax-frontend `
 
 $frontendUrl = gcloud run services describe insurimax-frontend --region $Region --format="value(status.url)"
 
-# 6. Restrict CORS to frontend domain
+# 6. Restrict CORS to frontend domain and localhost
 Write-Host "`nSecuring Backend CORS origins to $frontendUrl..." -ForegroundColor Yellow
 gcloud run services update insurimax-backend `
     --region $Region `
-    --update-env-vars "CORS_ORIGINS=$frontendUrl"
+    --update-env-vars="^#^CORS_ORIGINS=$frontendUrl,http://localhost:5173,http://localhost:3000"
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host " 🎉 InsuriMax successfully deployed to Google Cloud Run!" -ForegroundColor Green
-Write-Host " 🌐 Frontend URL : $frontendUrl" -ForegroundColor Cyan
-Write-Host " ⚙️ Backend API  : $backendUrl" -ForegroundColor Cyan
-Write-Host " 📖 Swagger Docs : $backendUrl/docs" -ForegroundColor Cyan
+Write-Host " [SUCCESS] InsuriMax successfully deployed to Cloud Run!" -ForegroundColor Green
+Write-Host " Frontend URL : $frontendUrl" -ForegroundColor Cyan
+Write-Host " Backend API  : $backendUrl" -ForegroundColor Cyan
+Write-Host " Swagger Docs : $backendUrl/docs" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Green

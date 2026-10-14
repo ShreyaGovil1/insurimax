@@ -34,7 +34,9 @@ RUN sed -i 's/\r//' /docker-entrypoint.d/40-generate-env-config.sh \
     && chmod +x /docker-entrypoint.d/40-generate-env-config.sh
 
 # Google Cloud Run injects $PORT (default: 8080)
+# Ensure envsubst only substitutes $PORT and does not corrupt internal Nginx variables like $uri
 ENV PORT=8080
+ENV NGINX_ENVSUBST_FILTER=PORT
 EXPOSE 8080
 
 # Health check probe
