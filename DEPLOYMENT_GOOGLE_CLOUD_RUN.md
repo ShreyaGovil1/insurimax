@@ -34,9 +34,9 @@ Open your terminal or PowerShell and authenticate:
 # 1. Log in to your Google Cloud account
 gcloud auth login
 
-# 2. Set your Google Cloud Project ID (replace with your real Project ID)
-export GCP_PROJECT_ID="your-gcp-project-id"
-export REGION="us-central1"
+# 2. Set your Google Cloud Project ID and Region
+export GCP_PROJECT_ID="insurimax-511211"
+export REGION="asia-south1"
 
 gcloud config set project $GCP_PROJECT_ID
 
@@ -51,8 +51,8 @@ gcloud services enable \
 
 *For Windows PowerShell:*
 ```powershell
-$env:GCP_PROJECT_ID = "your-gcp-project-id"
-$env:REGION = "us-central1"
+$env:GCP_PROJECT_ID = "insurimax-511211"
+$env:REGION = "asia-south1"
 gcloud config set project $env:GCP_PROJECT_ID
 
 gcloud services enable `
@@ -104,7 +104,7 @@ gcloud builds submit ./Backend `
 ```
 
 ### B. Deploy Backend to Cloud Run
-Replace the environment variables below with your real credentials:
+You can use `--env-vars-file Backend/env.cloudrun.yaml` which automatically loads all required variables from your `.env`:
 
 ```bash
 gcloud run deploy insurimax-backend \
@@ -141,7 +141,7 @@ gcloud run deploy insurimax-backend `
   --memory 2Gi `
   --cpu 2 `
   --timeout 300 `
-  --set-env-vars "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$env:GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$env:REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=$secretKey,DATABASE_URL=postgresql://user:password@aws-0-ap-south-1.pooler.supabase.com:5432/postgres,DB_SSL=true,CORS_ORIGINS=*"
+  --set-env-vars "ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$env:GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$env:REGION,VERTEX_AI_ENABLED=true,SECRET_KEY=change-to-a-secure-random-32-char-string,DATABASE_URL=postgresql://user:password@aws-0-ap-south-1.pooler.supabase.com:5432/postgres,DB_SSL=true,CORS_ORIGINS=*"
 ```
 
 > **Note:** Once deployed, Google Cloud Run will output your Backend URL, for example:

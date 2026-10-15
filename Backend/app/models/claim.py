@@ -116,6 +116,10 @@ class Claim(Base):
     # Deduction breakdown summary (JSONB for flexibility)
     deduction_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # AI reading of how the claim's bills relate (see document_service.reconcile_claim_bills):
+    # {"fingerprint": str, "model": str, "plan": {document_id: {role, itemises, ...}}}
+    bill_reconciliation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # Notes
     adjuster_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

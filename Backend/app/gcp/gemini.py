@@ -226,10 +226,57 @@ def _safe_parse_json(text: str) -> dict | list:
 
 # ── Specialised prompt builders ───────────────────────────────────────────────
 
+# Charges are read from every claim document, not only ones uploaded as bills: a pharmacy invoice,
+# OPD/diagnostic receipt or a bill page inside a discharge-summary PDF must all reach adjudication.
+# The "bill" block lets the backend reconcile several bills (see app/services/bill_consolidation.py).
+_BILLING_FIELDS = """  "bill": {
+    "bill_number": "string | null (the bill / invoice / receipt number printed on this document)",
+    "bill_date": "ISO8601 | null",
+    "issuer_name": "string | null (hospital, pharmacy, laboratory or diagnostic centre that issued it)",
+    "document_role": "bill | itemised_breakup | reference_charge_sheet | null",
+    "included_in_bill_number": "string | null",
+    "claim_phase": "pre_hospitalisation | hospitalisation | post_hospitalisation | null"
+  },
+  "line_items": [
+    {
+      "line_number": number,
+      "item_name": "string",
+      "item_category": "room_rent | icu | pharmacy | procedure | consultation | lab | consumables | other",
+      "quantity": number,
+      "unit_price_inr": number,
+      "total_price_inr": number,
+      "date": "ISO8601 | null",
+      "prescribed_by": "string | null",
+      "handwritten": boolean,
+      "summarises_other_bill": boolean,
+      "referenced_bill_number": "string | null",
+      "source": { "page": number, "text": "string" }
+    }
+  ],
+  "total_billed_inr": number | null,"""
+
+_BILLING_RULES = """
+BILLING RULES (apply to every document that lists priced charges):
+- line_items: one row per charged service or item exactly as printed. Never add payments, advances, deposits,
+  refunds, sub-totals or grand totals as line items. If the document has no priced charges, use [] and null total.
+- bill.document_role:
+  * "bill" - an actual bill, invoice, cash memo or receipt for charges (hospital final/interim bill, pharmacy
+    invoice, OPD / laboratory / radiology receipt, ambulance bill).
+  * "itemised_breakup" - the document details charges that another bill carries as a single total (e.g. it states
+    it is "transferred to", "credited to", "included in" or "part of" another bill / the final bill).
+  * "reference_charge_sheet" - a tariff, rate list, price schedule, estimate or quotation; nothing was charged.
+- bill.included_in_bill_number: the other bill's number when the document says its amount is carried into it.
+- A line that only carries the total of a separate bill/invoice (e.g. "Pharmacy as per bill no. X",
+  "Lab charges - see enclosed invoice") sets summarises_other_bill=true and referenced_bill_number to that number
+  (null if not printed).
+- bill.claim_phase: hospitalisation for charges during the admission; pre_/post_hospitalisation for charges before
+  admission or after discharge (when the document makes this clear), else null.
+"""
+
 EXTRACTION_SYSTEM_PROMPT = """
 You are InsuriMax's document extraction engine.
-Extract structured data from the provided hospital documents (itemized bill, prescription, discharge summary).
-Return ONLY valid JSON — no markdown, no explanation, no prose.
+Extract structured data from the provided billing document (hospital bill, pharmacy invoice, receipt, charge sheet).
+Return ONLY valid JSON — no markdown, no explanation, no prose.""" + _BILLING_RULES + """
 CITATIONS: every object inside a list (line items, medications, tests, coverage items, amounts) MUST include "source": {"page": <1-based page number of this file where it appears>, "text": "<the exact text of that row/line copied verbatim from the document, same spelling, numbers and punctuation; for table rows include every cell of the row>"}. For an image file use page 1.
 
 Output schema:
@@ -250,21 +297,7 @@ Output schema:
     "room_rent_per_day_inr": number | null,
     "icu_charges_per_day_inr": number | null
   },
-  "line_items": [
-    {
-      "line_number": number,
-      "item_name": "string",
-      "item_category": "room_rent | icu | pharmacy | procedure | consultation | lab | consumables | other",
-      "quantity": number,
-      "unit_price_inr": number,
-      "total_price_inr": number,
-      "date": "ISO8601 | null",
-      "prescribed_by": "string | null",
-      "handwritten": boolean,
-      "source": { "page": number, "text": "string" }
-    }
-  ],
-  "total_billed_inr": number,
+""" + _BILLING_FIELDS + """
   "currency": "INR",
   "extraction_notes": ["string"],
   "confidence_score": number
@@ -395,12 +428,57 @@ EXTRACTION_PROMPTS_BY_DOC_TYPE: dict[str, str] = {
 """ + _COMMON_TAIL,
 }
 
+# Bills are often uploaded under another section, or bound into the same PDF as clinical papers:
+# every non-policy document type also extracts any priced charges it contains.
+_EMBEDDED_BILLING_NOTE = (
+    "\nIf this document (or any page of it) also lists priced charges - a bill, invoice, receipt or charge "
+    "sheet - extract them as well; otherwise leave line_items empty." + _BILLING_RULES
+)
+for _doc_type in ("discharge_summary", "prescription", "lab_report", "consultation_notes", "other"):
+    EXTRACTION_PROMPTS_BY_DOC_TYPE[_doc_type] = (
+        EXTRACTION_PROMPTS_BY_DOC_TYPE[_doc_type]
+        .replace("Output schema:", _EMBEDDED_BILLING_NOTE + "\nOutput schema:", 1)
+        .replace(_COMMON_TAIL, _BILLING_FIELDS + "\n" + _COMMON_TAIL, 1)
+    )
+
 
 CLASSIFY_PROMPT = """
 Classify the attached document. Return ONLY JSON:
 {"document_type": "itemized_bill | discharge_summary | prescription | lab_report | consultation_notes | policy_document | other", "confidence": number}
 Use policy_document for insurance policy schedules, certificates, policy wording and benefit tables.
-Use itemized_bill ONLY for hospital bills listing charges per item.
+Use itemized_bill for ANY bill, invoice, cash memo, receipt or charge sheet whose main content is priced
+charges - hospital bills, pharmacy invoices, OPD / laboratory / radiology receipts, ambulance bills, tariffs.
+"""
+
+
+BILL_RECONCILIATION_PROMPT = """
+You are a senior TPA billing auditor. Below is every document on ONE health insurance claim that lists
+priced charges, as already extracted (header details and every line with its amount). Documents may have been
+uploaded under any section, and names, wording and numbering differ between hospitals, pharmacies and labs.
+Work out from the MEANING of the documents how they relate, so that every charge is claimed exactly once.
+
+For each document decide its role:
+- "bill": an actual bill / invoice / receipt for charges that no other uploaded bill already includes
+  (e.g. the hospital final bill; separate pre- or post-hospitalisation OPD, pharmacy, lab or imaging receipts).
+- "itemised_breakup": a detailed bill whose total another uploaded bill already carries as ONE line
+  (e.g. final bill line "Pharmacy charges 11,339.40" and a pharmacy invoice for 11,339.40 with the medicines;
+  or "Investigations" on the final bill and a lab bill itemising them). Set "itemises" to that line.
+  Use dates, patient, issuer, amounts, the nature of the items and any reference / transfer wording -
+  the line need not name the document or its number. Amounts normally match; if they differ slightly, still
+  link when the meaning is clearly the same and mention the difference in "reason".
+- "reference_charge_sheet": a tariff, rate list, price schedule, estimate or quotation - nothing was charged.
+- "duplicate": another copy of a document already in the list (same charges); set "duplicate_of".
+- "payment_receipt": only proves a payment (advance, deposit, settlement) for charges billed elsewhere.
+Also give the claim_phase of each document's charges relative to the admission (pre_hospitalisation,
+hospitalisation, post_hospitalisation, or null if unclear).
+Never link a document to itself, never link two documents to the same line, and do not invent links: if a
+detailed bill's total is not carried by any line, it is a "bill".
+
+Return ONLY JSON:
+{"documents": [{"document_id": "string", "role": "bill | itemised_breakup | reference_charge_sheet | duplicate | payment_receipt",
+  "itemises": {"document_id": "string", "line_number": number} | null, "duplicate_of": "string | null",
+  "claim_phase": "pre_hospitalisation | hospitalisation | post_hospitalisation | null",
+  "reason": "one plain sentence a claims adjuster can verify"}]}
 """
 
 

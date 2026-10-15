@@ -49,6 +49,11 @@ AI_STEPS: dict[str, tuple[str, str, str]] = {
         "Reads bills, discharge summaries and other claim documents into structured data.",
         "GEMINI_MODEL",
     ),
+    "bill_reconciliation": (
+        "Bill reconciliation",
+        "Reads all of a claim's bills together: which are separate bills, itemised breakups, duplicates or tariffs.",
+        "GEMINI_MODEL",
+    ),
     "policy_extraction": (
         "Policy rule extraction",
         "Reads an uploaded policy wording into structured rules.",

@@ -40,6 +40,7 @@ import { TypedExtractionPanel, effectiveDocType, docTypeLabel } from "./TypedExt
 import { CitationButton, CitationViewer } from "./CitationViewer"
 import { citationKey } from "./citations"
 import { ExtractedDataEditor } from "./ExtractedDataEditor"
+import { BillsReconciliationPanel } from "./BillsReconciliationPanel"
 
 const CATEGORY_TONES = {
   room_rent: "bg-peacock-50 text-peacock-700",
@@ -377,6 +378,9 @@ export function DocumentExtractionView({
       (claimHospitalName.toLowerCase().includes(billHospitalName.toLowerCase()) ||
         billHospitalName.toLowerCase().includes(claimHospitalName.toLowerCase()))
   )
+
+  // Claim-level view combining several bills: show which bill each line came from
+  const multiBill = !selectedDocId && new Set(lineItems.map((item) => item.source_document).filter(Boolean)).size > 1
 
   // Unique categories for filtering
   const categories = ["all", ...new Set(lineItems.map((item) => item.item_category || "other").filter(Boolean))]
@@ -843,6 +847,8 @@ export function DocumentExtractionView({
             </OverviewCell>
           </section>
 
+          {!selectedDocId && <BillsReconciliationPanel data={extractedData} />}
+
           {/* Line items */}
           <section className="overflow-hidden rounded-card bg-surface shadow-card" aria-label="Itemised bill">
             <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
@@ -899,6 +905,7 @@ export function DocumentExtractionView({
                         <th className="w-12 py-2.5 pl-5 pr-2 text-right font-semibold">#</th>
                         <th className="px-3 py-2.5 font-semibold">Item</th>
                         <th className="px-3 py-2.5 font-semibold">Category</th>
+                        {multiBill && <th className="px-3 py-2.5 font-semibold">Bill</th>}
                         <th className="px-3 py-2.5 text-right font-semibold">Qty</th>
                         <th className="px-3 py-2.5 text-right font-semibold">Unit price</th>
                         <th className="px-3 py-2.5 text-right font-semibold">Total</th>
@@ -908,7 +915,7 @@ export function DocumentExtractionView({
                     <tbody className="divide-y divide-line">
                       {filteredLineItems.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-6 text-center text-small text-ink-3">
+                          <td colSpan={multiBill ? 8 : 7} className="p-6 text-center text-small text-ink-3">
                             No line items in this category.
                           </td>
                         </tr>
@@ -936,6 +943,16 @@ export function DocumentExtractionView({
                                   {humanize(cat)}
                                 </span>
                               </td>
+                              {multiBill && (
+                                <td className="max-w-[220px] px-3 py-2.5 text-tiny text-ink-3">
+                                  <div className="truncate" title={item.itemises_summary_line ? `Itemises ${item.itemises_summary_line}` : item.source_document}>
+                                    {item.source_document}
+                                  </div>
+                                  {["pre_hospitalisation", "post_hospitalisation"].includes(item.claim_phase) && (
+                                    <span className="font-semibold text-peacock-700">{humanize(item.claim_phase)}</span>
+                                  )}
+                                </td>
+                              )}
                               <td className="figures px-3 py-2.5 text-right text-ink-2">{item.quantity || 1}</td>
                               <td className="figures whitespace-nowrap px-3 py-2.5 text-right text-ink-2">{formatCurrencyINR(item.unit_price_inr || item.unit_price || 0)}</td>
                               <td className="figures whitespace-nowrap px-3 py-2.5 text-right font-semibold text-ink">
@@ -957,8 +974,8 @@ export function DocumentExtractionView({
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-line bg-ground/70">
-                        <td colSpan={5} className="py-3 pl-5 pr-3 text-right text-small font-semibold text-ink-3">
-                          Total on the bill
+                        <td colSpan={multiBill ? 6 : 5} className="py-3 pl-5 pr-3 text-right text-small font-semibold text-ink-3">
+                          {multiBill ? "Total across all bills" : "Total on the bill"}
                         </td>
                         <td className="figures whitespace-nowrap px-3 py-3 text-right text-body font-semibold text-ink">{formatCurrencyINR(totalBilled)}</td>
                         <td />

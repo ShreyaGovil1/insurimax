@@ -405,15 +405,13 @@ async def patch_document_extracted_data(
     from sqlalchemy.orm.attributes import flag_modified
     flag_modified(job, "corrected_payload")
 
-    if doc.doc_type == DocumentType.ITEMIZED_BILL and isinstance(body.corrected_payload, dict):
-        bill_sum = body.corrected_payload.get("total_billed_inr")
-        if bill_sum is None and "line_items" in body.corrected_payload:
-            items = body.corrected_payload.get("line_items") or []
-            bill_sum = sum(float(i.get("total_price_inr") or 0) for i in items if isinstance(i, dict))
-        if bill_sum is not None:
-            claim_obj = await claim_service.get_claim(db, claim_id)
-            if claim_obj and claim_obj.status == ClaimStatus.DRAFT:
-                claim_obj.billed_amount = float(bill_sum)
+    await db.flush()
+    if doc.doc_type != DocumentType.POLICY_DOCUMENT and isinstance(body.corrected_payload, dict):
+        # Charges changed: re-read how the bills relate, and bill the claim for all of them combined.
+        merged = await document_service.get_claim_extracted_data(db, claim_id, refresh_reconciliation=True)
+        claim_obj = await claim_service.get_claim(db, claim_id)
+        if claim_obj and claim_obj.status == ClaimStatus.DRAFT and merged.get("total_billed_inr") is not None:
+            claim_obj.billed_amount = float(merged["total_billed_inr"])
 
     await db.flush()
     return {"message": "Extracted data updated", "job_id": str(job.id)}

@@ -114,7 +114,7 @@ FRONTEND_URL="$(gcloud run services describe insurimax-frontend --region "$REGIO
 echo -e "\nConfiguring Backend CORS..."
 gcloud run services update insurimax-backend \
   --region "$REGION" \
-  --update-env-vars "CORS_ORIGINS=*"
+  --update-env-vars "CORS_ORIGINS=$FRONTEND_URL,https://insurimax-frontend-788097616714.asia-south1.run.app,http://localhost:5173,http://localhost:3000"
 
 echo -e "\n========================================================"
 echo " 🎉 Deployment Complete!"

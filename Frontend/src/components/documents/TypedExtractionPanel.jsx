@@ -418,6 +418,23 @@ export function TypedExtractionPanel({ docType, data, claimId, onEdit }) {
             <div className={activeCitation ? "grid grid-cols-1 xl:grid-cols-2" : ""}>
               <div>
                 {renderSections(docType, d)}
+                {/* Charges found in a non-bill document (a bill uploaded in another section, or bill pages inside it) */}
+                {docType !== "itemized_bill" && docType !== "policy_document" && (
+                  <>
+                    <DataTable
+                      title="Charges on this document"
+                      columns={[
+                        { key: "item_name", label: "Item" },
+                        { key: "item_category", label: "Category" },
+                        { key: "quantity", label: "Qty" },
+                        { key: "unit_price_inr", label: "Unit price", format: money },
+                        { key: "total_price_inr", label: "Total", format: money },
+                      ]}
+                      rows={d.line_items}
+                    />
+                    {d.line_items?.length > 0 && <Fields title="Charges total" rows={[["Total", money(d.total_billed_inr)]]} />}
+                  </>
+                )}
                 <Chips title="Extraction notes" items={notes} />
               </div>
               {activeCitation && (

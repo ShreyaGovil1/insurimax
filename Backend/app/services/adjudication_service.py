@@ -145,6 +145,42 @@ def _bill_source(line_number, item_name: str | None, line_items: list[dict]) -> 
     return best
 
 
+_PROVENANCE_KEYS = (
+    "document_id", "source_document", "bill_number", "issuer_name", "bill_role",
+    "bill_line_number", "itemises_summary_line", "claim_phase",
+)
+
+
+def _bill_line(line_number, line_items: list[dict]) -> dict:
+    return next((li for li in line_items if li.get("line_number") == line_number), {})
+
+
+def _undecided_lines(line_decisions: list[dict], line_items: list[dict]) -> list[dict]:
+    """Bill lines the agent returned no decision for: kept for the adjuster, never silently dropped."""
+    decided = {d.get("line_number") for d in line_decisions}
+    missing = []
+    for idx, li in enumerate(line_items):
+        line_number = li.get("line_number", idx + 1)
+        if line_number in decided:
+            continue
+        try:
+            billed = float(li.get("total_price_inr") or 0)
+        except (TypeError, ValueError):
+            billed = 0.0
+        missing.append({
+            "line_number": line_number,
+            "item_name": li.get("item_name") or "Unknown",
+            "item_category": li.get("item_category"),
+            "billed_amount_inr": billed,
+            "approved_amount_inr": 0.0,
+            "deducted_amount_inr": 0.0,
+            "status": "flagged",
+            "confidence": 0.0,
+            "explanation": "The AI returned no decision for this line; it needs an adjuster's review.",
+        })
+    return missing
+
+
 _EXCLUDED_STATUSES = ("non_payable", "rejected")
 
 
@@ -275,8 +311,8 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
     await db.flush()
 
     try:
-        # ── Extracted bill data ────────────────────────────────────────────────
-        extracted_data = await get_claim_extracted_data(db, claim_id)
+        # ── Extracted bill data (all bills, reconciled) ───────────────────────
+        extracted_data = await get_claim_extracted_data(db, claim_id, refresh_reconciliation=True)
 
         # ── Policy rules ───────────────────────────────────────────────────────
         policy_rules: list[dict] = []
@@ -336,6 +372,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
         flagged_infractions = gemini_output.get("flagged_infractions_or_reasons", [])
         required_actions = gemini_output.get("required_actions", {})
         line_decisions = gemini_output.get("line_item_decisions", [])
+        line_decisions.extend(_undecided_lines(line_decisions, bill_items))
         audit_status = summary.get("status", "APPROVED")  # APPROVED | DENIED | QUERY_RAISED
 
         # ── Delete old line items if re-running ────────────────────────────────
@@ -369,6 +406,7 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
             # Citations: the bill line this decision is about, and only the policy passages the
             # agent says it relied on (retrieved-but-uncited passages are not shown as evidence).
             line_number = item.get("line_number", idx + 1)
+            bill_line = _bill_line(line_number, bill_items)
             policy_citations = [
                 {**evidence_by_id[eid], "evidence_id": eid}
                 for eid in dict.fromkeys(item.get("policy_evidence_ids") or [])
@@ -393,6 +431,8 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
                     "cap_analysis": item.get("cap_analysis"),
                     "source": _bill_source(line_number, item.get("item_name"), bill_items),
                     "policy_evidence": policy_citations,
+                    # Which uploaded bill this line came from (claims combine several bills)
+                    **{k: bill_line.get(k) for k in _PROVENANCE_KEYS},
                 },
             )
             db.add(lid)
@@ -458,7 +498,10 @@ async def run_adjudication(db: AsyncSession, claim_id: uuid.UUID) -> Adjudicatio
 
         # ── Update adjudication result ─────────────────────────────────────────
         adj.status = AdjudicationStatus.COMPLETED
-        adj.total_billed_inr = round(float(financial.get("total_billed_amount", 0)), 2)
+        # Billed = the reconciled bills (every line, each charge once), not the agent's own sum
+        adj.total_billed_inr = round(
+            float(extracted_data.get("total_billed_inr") or financial.get("total_billed_amount", 0)), 2
+        )
         adj.total_approved_inr = round(float(financial.get("total_approved_amount", 0)), 2)
         adj.total_deducted_inr = round(float(financial.get("total_deductions", 0)), 2)
         adj.deduction_breakdown = deduction_breakdown

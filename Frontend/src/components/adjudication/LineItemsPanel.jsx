@@ -6,6 +6,25 @@ import { EmptyState } from "../ui/empty-state"
 import { DecisionPill } from "../common/status"
 import { OUTCOME_FILTERS } from "./journey"
 
+const PHASE_LABELS = { pre_hospitalisation: "Pre-hospitalisation", post_hospitalisation: "Post-hospitalisation" }
+
+/** Which uploaded bill a line came from (a claim combines several bills) and its claim phase. */
+function BillSource({ item }) {
+  const c = item.citation_data || {}
+  const phase = PHASE_LABELS[c.claim_phase]
+  if (!c.source_document && !phase) return null
+  return (
+    <>
+      {c.source_document && (
+        <span className="max-w-[260px] truncate" title={c.itemises_summary_line ? `Itemises ${c.itemises_summary_line}` : c.source_document}>
+          · {c.source_document}
+        </span>
+      )}
+      {phase && <span className="rounded-md bg-peacock-50 px-1.5 font-semibold text-peacock-700">{phase}</span>}
+    </>
+  )
+}
+
 /** The itemised bill as decided: pick a row to see its reasoning on the right. */
 export function LineItemsPanel({ items, selectedId, onSelect, onOverride, canOverride, filter, onFilterChange, isHospital }) {
   const rowRefs = useRef({})
@@ -44,6 +63,7 @@ export function LineItemsPanel({ items, selectedId, onSelect, onOverride, canOve
     }
   }
 
+  const billCount = new Set(items.map((li) => li.citation_data?.source_document).filter(Boolean)).size
   const totalBilled = items.reduce((a, li) => a + (Number(li.billed_amount_inr) || 0), 0)
   const totalApproved = items.reduce((a, li) => a + (Number(li.approved_amount_inr) || 0), 0)
 
@@ -84,6 +104,10 @@ export function LineItemsPanel({ items, selectedId, onSelect, onOverride, canOve
                         {item.item_name}
                       </span>
                       <DecisionPill status={item.final_status} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-tiny text-ink-3">
+                      <span>{humanize(item.item_category) || "Uncategorised"}</span>
+                      <BillSource item={item} />
                     </div>
                     <div className="figures flex items-center gap-3 text-small text-ink-3">
                       <span>
@@ -141,6 +165,7 @@ export function LineItemsPanel({ items, selectedId, onSelect, onOverride, canOve
                         <div className={cn("font-semibold leading-snug", selected ? "text-peacock-800" : "text-ink")}>{item.item_name}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-tiny text-ink-3">
                           <span>{humanize(item.item_category) || "Uncategorised"}</span>
+                          <BillSource item={item} />
                           {item.is_overridden && (
                             <span className="inline-flex items-center gap-1 rounded-md bg-sand-100 px-1.5 font-semibold text-sand-700">
                               <PenLine className="h-3 w-3" />
@@ -188,6 +213,7 @@ export function LineItemsPanel({ items, selectedId, onSelect, onOverride, canOve
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-line bg-ground/60 px-4 py-2.5 text-small text-ink-3 sm:px-5">
         <span>
           {items.length} line item{items.length === 1 ? "" : "s"}
+          {billCount > 1 && ` from ${billCount} bills`}
         </span>
         <span className="figures">
           <span className="text-ink-2">{formatCurrencyINR(totalBilled)}</span> billed ·{" "}

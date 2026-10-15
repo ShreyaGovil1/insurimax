@@ -91,6 +91,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"^https://insurimax-frontend-.*\.run\.app$",
     allow_credentials=False if "*" in settings.CORS_ORIGINS else True,
     allow_methods=["*"],
     allow_headers=["*"],

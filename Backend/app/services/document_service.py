@@ -2,6 +2,9 @@
 Document service — GCS upload orchestration and extraction job management.
 """
 import asyncio
+import copy
+import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -10,8 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gcp import storage as gcs
-from app.services import ai_model_service
+from app.services import ai_model_service, bill_consolidation
 from app.gcp.gemini import (
+    BILL_RECONCILIATION_PROMPT,
     CLASSIFY_PROMPT,
     get_extraction_prompt,
     generate_json,
@@ -171,6 +175,11 @@ async def trigger_extraction(db: AsyncSession, doc_id: uuid.UUID) -> ExtractionJ
         doc.extraction_status = ExtractionStatus.FAILED
 
     await db.flush()
+    if job.status == ExtractionStatus.COMPLETED and doc.doc_type != DocumentType.POLICY_DOCUMENT:
+        try:  # how this document relates to the claim's other bills
+            await reconcile_claim_bills(db, doc.claim_id)
+        except Exception as exc:
+            logger.warning("Bill reconciliation after extracting %s failed: %s", doc.id, exc)
     return job
 
 
@@ -203,36 +212,164 @@ def _deep_merge(base: dict, new: dict) -> dict:
     return base
 
 
-async def get_claim_extracted_data(db: AsyncSession, claim_id: uuid.UUID) -> dict:
-    """Merge extracted payloads of the claim's hospital documents (never policy/other documents)."""
+# Charge fields are combined across documents by bill_consolidation, never deep-merged.
+_BILLING_KEYS = {"line_items", "items", "total_billed_inr", "bill", "document_type"}
+_NOT_CLAIMED_ROLES = {"reference_charge_sheet", "payment_receipt", "duplicate"}
+# Claim-level fields produced by bill_consolidation (and the API's verification block)
+_CONSOLIDATED_KEYS = {
+    "bills", "superseded_summary_lines", "reference_charge_sheets", "bill_reconciliation_notes",
+    "bill_reconciliation_method", "_verification",
+}
+
+
+def _payload(job: ExtractionJob) -> dict:
+    payload = job.corrected_payload or job.extracted_payload or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _headers(payload: dict) -> dict:
+    # Copied: _deep_merge keeps references, and must never write into a job's stored payload.
+    return copy.deepcopy({k: v for k, v in payload.items() if k not in _BILLING_KEYS})
+
+
+async def _latest_extractions(db: AsyncSession, claim_id: uuid.UUID) -> list[tuple[ExtractionJob, Document]]:
+    """Latest completed extraction of each non-policy document (a re-extraction replaces the earlier one)."""
     result = await db.execute(
-        select(ExtractionJob, Document.doc_type)
+        select(ExtractionJob, Document)
         .join(Document, Document.id == ExtractionJob.document_id)
         .where(
             ExtractionJob.claim_id == claim_id,
             ExtractionJob.status == ExtractionStatus.COMPLETED,
-            Document.doc_type.in_(_CLAIM_MERGE_PRIORITY),
+            Document.doc_type != DocumentType.POLICY_DOCUMENT,
         )
-        .order_by(ExtractionJob.completed_at)  # oldest first, newest overrides within a type
+        .order_by(ExtractionJob.completed_at)
     )
-    rows = result.all()
+    latest: dict[uuid.UUID, tuple[ExtractionJob, Document]] = {}
+    for job, doc in result.all():
+        latest[doc.id] = (job, doc)
+    return list(latest.values())
 
+
+def _claim_bills(rows: list[tuple[ExtractionJob, Document]]) -> list[dict]:
+    """Every document that lists charges, whatever section it was uploaded under."""
+    bills = []
+    for job, doc in rows:
+        bill = bill_consolidation.bill_from_payload(str(doc.id), doc.original_filename, doc.doc_type.value, _payload(job))
+        if bill:
+            bills.append(bill)
+    return bills
+
+
+async def _reconciliation_plan(db: AsyncSession, claim, bills: list[dict], stay: dict, refresh: bool) -> dict:
+    """
+    The AI's reading of how the claim's bills relate, cached on the claim and keyed by a fingerprint of
+    what it read, so it is redone only when a bill is added, re-extracted or corrected. With
+    ``refresh=False`` a stale plan is not recomputed ({} -> rule-based fallback).
+    """
+    if claim is None or len(bills) < 2:
+        return {}
+    documents = bill_consolidation.plan_input(bills)
+    fingerprint = hashlib.sha256(json.dumps([stay, documents], sort_keys=True, default=str).encode()).hexdigest()
+    stored = claim.bill_reconciliation or {}
+    if stored.get("fingerprint") == fingerprint:
+        return stored.get("plan") or {}
+    if not refresh:
+        return {}
+    try:
+        model = await ai_model_service.model_for("bill_reconciliation")
+        result, _, _ = await generate_json(
+            prompt=(
+                f"{BILL_RECONCILIATION_PROMPT}\n## Hospital stay\n{json.dumps(stay, default=str)}\n\n"
+                f"## Documents\n{json.dumps(documents, indent=1, default=str)}"
+            ),
+            model_name=model,
+        )
+    except Exception as exc:  # reconciliation falls back to rules; never block extraction / adjudication
+        logger.warning("Bill reconciliation failed for claim %s: %s", claim.id, exc)
+        return {}
+    known = {b["document_id"] for b in bills}
+    entries = result.get("documents") if isinstance(result, dict) else None
+    plan = {
+        str(e["document_id"]): e
+        for e in entries or []
+        if isinstance(e, dict) and str(e.get("document_id")) in known
+    }
+    claim.bill_reconciliation = {
+        "fingerprint": fingerprint,
+        "model": model,
+        "plan": plan,
+        "reconciled_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.flush()
+    return plan
+
+
+async def reconcile_claim_bills(db: AsyncSession, claim_id: uuid.UUID) -> None:
+    """Refresh the AI bill reconciliation after a document's extraction changes (best-effort)."""
+    await get_claim_extracted_data(db, claim_id, refresh_reconciliation=True)
+
+
+async def get_claim_extracted_data(
+    db: AsyncSession, claim_id: uuid.UUID, refresh_reconciliation: bool = False
+) -> dict:
+    """
+    Claim-level view of the extracted documents (never policy documents):
+    - patient / hospital / clinical fields are deep-merged, hospital documents winning over clinical ones and
+      the main bill winning over other bills;
+    - charges from EVERY document that lists them are combined by bill_consolidation, using the AI
+      reconciliation of how the bills relate (refreshed first when ``refresh_reconciliation``).
+    """
+    rows = await _latest_extractions(db, claim_id)
+
+    # "other" documents carry charges but not header fields (an insurer letter must not rename the hospital).
     merged: dict = {}
     for doc_type in _CLAIM_MERGE_PRIORITY:
-        for job, row_type in rows:
-            if row_type != doc_type:
-                continue
-            payload = job.corrected_payload or job.extracted_payload or {}
-            if isinstance(payload, dict):
-                _deep_merge(merged, {k: v for k, v in payload.items() if k != "document_type"})
+        if doc_type == DocumentType.ITEMIZED_BILL:
+            continue
+        for job, doc in rows:
+            if doc.doc_type == doc_type:
+                _deep_merge(merged, _headers(_payload(job)))
 
+    bills = _claim_bills(rows)
+    bill_rows = [(job, doc) for job, doc in rows if doc.doc_type == DocumentType.ITEMIZED_BILL]
+    if not bills:
+        for job, _ in bill_rows:
+            _deep_merge(merged, _headers(_payload(job)))
+        return merged
+
+    patient: dict = {}
+    for job, _ in bill_rows:
+        _deep_merge(patient, _headers(_payload(job)).get("patient") or {})
+    _deep_merge(patient, copy.deepcopy(merged.get("patient") or {}))
+    stay = {"admission_date": patient.get("admission_date"), "discharge_date": patient.get("discharge_date")}
+
+    claim = await db.get(Claim, claim_id)
+    plan = await _reconciliation_plan(db, claim, bills, stay, refresh_reconciliation)
+    combined = bill_consolidation.consolidate(
+        bills,
+        bill_consolidation.parse_date(stay["admission_date"]),
+        bill_consolidation.parse_date(stay["discharge_date"]),
+        plan,
+    )
+
+    # Header fields of the bills: secondary bills first, the main bill last so its patient/hospital win.
+    primary_id = combined.pop("primary_document_id")
+    roles = {b["document_id"]: b["role"] for b in combined["bills"]}
+    for job, doc in sorted(bill_rows, key=lambda r: str(r[1].id) == primary_id):
+        if roles.get(str(doc.id)) not in _NOT_CLAIMED_ROLES:
+            _deep_merge(merged, _headers(_payload(job)))
+    merged.update(combined)
     return merged
 
 
 async def patch_extracted_data(
     db: AsyncSession, claim_id: uuid.UUID, corrected_payload: dict
 ) -> ExtractionJob | None:
-    """Apply manual corrections to the most recent completed extraction job."""
+    """
+    Apply claim-level corrections (patient, hospital, ...) to the most recent completed extraction job.
+    The claim-level view combines several documents' charges, so charges are corrected per document
+    (PATCH .../documents/{doc_id}/extracted-data); here the job keeps its own charges.
+    """
     result = await db.execute(
         select(ExtractionJob)
         .join(Document, Document.id == ExtractionJob.document_id)
@@ -247,7 +384,11 @@ async def patch_extracted_data(
     job = result.scalar_one_or_none()
     if not job:
         return None
-    job.corrected_payload = corrected_payload
+    own = _payload(job)
+    job.corrected_payload = {
+        **{k: v for k, v in corrected_payload.items() if k not in _BILLING_KEYS and k not in _CONSOLIDATED_KEYS},
+        **{k: v for k, v in own.items() if k in _BILLING_KEYS},
+    }
     await db.flush()
     return job
 

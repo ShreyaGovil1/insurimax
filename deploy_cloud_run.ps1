@@ -97,7 +97,7 @@ $frontendUrl = gcloud run services describe insurimax-frontend --region $Region 
 Write-Host "`nSetting Backend CORS origins..." -ForegroundColor Yellow
 gcloud run services update insurimax-backend `
     --region $Region `
-    --update-env-vars "CORS_ORIGINS=*"
+    --update-env-vars="^#^CORS_ORIGINS=$frontendUrl,https://insurimax-frontend-788097616714.asia-south1.run.app,http://localhost:5173,http://localhost:3000"
 
 Write-Host "`n========================================================" -ForegroundColor Green
 Write-Host " [SUCCESS] InsuriMax successfully deployed to Cloud Run!" -ForegroundColor Green
