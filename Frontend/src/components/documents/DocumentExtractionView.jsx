@@ -56,6 +56,13 @@ const CATEGORY_TONES = {
   diagnostics: "bg-sunken text-ink-2",
 }
 
+const safeText = (val) => {
+  if (!val) return ""
+  if (typeof val === "string") return val
+  if (typeof val === "object") return val.name || val.description || val.title || val.text || JSON.stringify(val)
+  return String(val)
+}
+
 export function DocumentExtractionView({
   claimId,
   claim: propClaim,
@@ -357,13 +364,13 @@ export function DocumentExtractionView({
   const confidenceScore = extractedData?.confidence_score
 
   // Identity and hospital facility verification
-  const claimPatientName = claim?.patient_name?.trim() || ""
-  const billPatientName = (patient?.name || "").trim()
+  const claimPatientName = safeText(claim?.patient_name).trim()
+  const billPatientName = safeText(patient?.name).trim()
   const isNameMatch = Boolean(claimPatientName && billPatientName && claimPatientName.toLowerCase() === billPatientName.toLowerCase())
   const hasNameMismatch = Boolean(claimPatientName && billPatientName && !isNameMatch)
 
-  const claimHospitalName = claim?.hospital_name?.trim() || ""
-  const billHospitalName = (hospital?.name || "").trim()
+  const claimHospitalName = safeText(claim?.hospital_name).trim()
+  const billHospitalName = safeText(hospital?.name).trim()
   const isHospitalMatch = Boolean(
     claimHospitalName &&
       billHospitalName &&
@@ -798,7 +805,7 @@ export function DocumentExtractionView({
           {/* Overview */}
           <section className="grid gap-px overflow-hidden rounded-card bg-line shadow-card md:grid-cols-3" aria-label="Bill overview">
             <OverviewCell icon={Building2} title="Hospital & admission">
-              <div className="font-semibold text-ink">{hospital.name || <span className="font-normal text-ink-3">Not found on the bill</span>}</div>
+              <div className="font-semibold text-ink">{safeText(hospital.name) || <span className="font-normal text-ink-3">Not found on the bill</span>}</div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-small">
                 <div>
                   <div className="text-tiny text-ink-3">Ward</div>
@@ -812,17 +819,17 @@ export function DocumentExtractionView({
             </OverviewCell>
             <OverviewCell icon={User} title="Patient & clinical">
               <div className={cn("font-semibold", hasNameMismatch ? "text-vermilion-700" : "text-ink")}>
-                {patient.name || <span className="font-normal text-ink-3">Not found on the bill</span>}
+                {safeText(patient.name) || <span className="font-normal text-ink-3">Not found on the bill</span>}
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {(patient.diagnosis || []).map((diag, i) => (
                   <Badge key={`d${i}`} variant="peacock">
-                    {diag}
+                    {safeText(diag)}
                   </Badge>
                 ))}
                 {(patient.procedures || []).map((proc, i) => (
                   <Badge key={`p${i}`} variant="sand">
-                    {proc}
+                    {safeText(proc)}
                   </Badge>
                 ))}
                 {!patient.diagnosis?.length && !patient.procedures?.length && <span className="text-small text-ink-3">No diagnosis listed</span>}
@@ -918,7 +925,7 @@ export function DocumentExtractionView({
                               <td className="py-2.5 pl-5 pr-2 text-right font-mono text-tiny text-ink-3">{item.line_number || idx + 1}</td>
                               <td className="px-3 py-2.5">
                                 <div className="flex flex-wrap items-center gap-1.5 font-medium text-ink">
-                                  <span>{item.item_name || item.name || "Item"}</span>
+                                  <span>{safeText(item.item_name || item.name) || "Item"}</span>
                                   {item.manually_added && <Badge variant="leaf">Added</Badge>}
                                   {item.manually_edited && <Badge variant="sand">Edited</Badge>}
                                 </div>

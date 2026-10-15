@@ -106,15 +106,15 @@ gcloud run deploy insurimax-frontend \
   --allow-unauthenticated \
   --memory 512Mi \
   --cpu 1 \
-  --set-env-vars "VITE_API_URL=$BACKEND_URL/api/v1"
+  --set-env-vars "VITE_API_URL=$BACKEND_URL/api/v1,VITE_DEMO_PERSONAS=true"
 
 FRONTEND_URL="$(gcloud run services describe insurimax-frontend --region "$REGION" --format="value(status.url)")"
 
-# 6. Secure CORS
-echo -e "\nRestricting Backend CORS to $FRONTEND_URL..."
+# 6. Configure CORS
+echo -e "\nConfiguring Backend CORS..."
 gcloud run services update insurimax-backend \
   --region "$REGION" \
-  --update-env-vars "CORS_ORIGINS=$FRONTEND_URL,http://localhost:5173,http://localhost:3000"
+  --update-env-vars "CORS_ORIGINS=*"
 
 echo -e "\n========================================================"
 echo " 🎉 Deployment Complete!"

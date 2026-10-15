@@ -63,7 +63,7 @@ function Chips({ title, items, variant = "secondary" }) {
       <div className="flex flex-wrap gap-1.5">
         {list.map((item, i) => (
           <Badge key={i} variant={variant} className="whitespace-normal text-small font-medium leading-5">
-            {typeof item === "string" ? item : JSON.stringify(item)}
+            {typeof item === "string" ? item : (item?.name || item?.description || item?.title || JSON.stringify(item))}
           </Badge>
         ))}
       </div>

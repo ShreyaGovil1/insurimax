@@ -22,6 +22,7 @@ import { PatientStatusView } from "./components/patient/PatientStatusView"
 import { AdminPanelView } from "./components/admin/AdminPanelView"
 import { ClaimCreateModal } from "./components/claims/ClaimCreateModal"
 import { BrandMark } from "./components/common/BrandMark"
+import { ErrorBoundary } from "./components/common/ErrorBoundary"
 
 /**
  * Route guard: Redirects to /login if unauthenticated, preserving intended location
@@ -105,7 +106,9 @@ function AppLayout() {
       <Header onNewClaim={() => setCreateClaimOpen(true)} />
 
       <main id="main" className="flex-1 pb-16">
-        <Outlet context={{ openCreateClaim: () => setCreateClaimOpen(true) }} />
+        <ErrorBoundary>
+          <Outlet context={{ openCreateClaim: () => setCreateClaimOpen(true) }} />
+        </ErrorBoundary>
       </main>
 
       <ClaimCreateModal

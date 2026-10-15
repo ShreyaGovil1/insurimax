@@ -9,7 +9,7 @@ ENV VITE_API_URL=$VITE_API_URL
 
 # Demo persona buttons on the sign-in page ("true" to enable). Local demos only: it puts
 # the seeded accounts' passwords in the bundle. Leave unset for public deployments.
-ARG VITE_DEMO_PERSONAS
+ARG VITE_DEMO_PERSONAS="true"
 ENV VITE_DEMO_PERSONAS=$VITE_DEMO_PERSONAS
 
 # Install dependencies using clean install

@@ -36,6 +36,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "../ui/toast"
 import { useAuth } from "../../context/AuthContext"
 import { DocumentExtractionView } from "../documents/DocumentExtractionView"
+import { ErrorBoundary } from "../common/ErrorBoundary"
 import { ClaimQueriesView } from "../queries/ClaimQueriesView"
 import { CitationViewer } from "../documents/CitationViewer"
 import { citationKey } from "../documents/citations"
@@ -758,16 +759,18 @@ export function AdjudicationCockpit({ claimId: propClaimId }) {
 
         <div key={activeTab} className="animate-rise">
           {activeTab === "documents" && (
-            <DocumentExtractionView
-              claimId={claimId}
-              claim={claim}
-              onRunAdjudication={() => requestRunAdjudication({ showResults: true })}
-              onSwitchToAdjudication={() => setActiveTab("adjudication")}
-              runningPipeline={runningPipeline}
-              hasAdjudication={hasAdjudication}
-              onDocumentsChange={setDocs}
-              onSubmitClaim={isHospital && isDraft ? requestSubmitClaim : undefined}
-            />
+            <ErrorBoundary>
+              <DocumentExtractionView
+                claimId={claimId}
+                claim={claim}
+                onRunAdjudication={() => requestRunAdjudication({ showResults: true })}
+                onSwitchToAdjudication={() => setActiveTab("adjudication")}
+                runningPipeline={runningPipeline}
+                hasAdjudication={hasAdjudication}
+                onDocumentsChange={setDocs}
+                onSubmitClaim={isHospital && isDraft ? requestSubmitClaim : undefined}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === "queries" && <ClaimQueriesView claimId={claimId} onQueriesChange={setQueries} />}

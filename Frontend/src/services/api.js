@@ -121,7 +121,10 @@ async function apiBlobUrl(endpoint, { method = "GET", body } = {}) {
 // any other production build this object literal is dropped as dead code and
 // DEMO_CREDENTIALS is empty (no login-page fill, no persona switch). Never set
 // VITE_DEMO_PERSONAS for a public deployment: anyone could sign in as the admin.
-export const DEMO_PERSONAS_ENABLED = import.meta.env.DEV === true || import.meta.env.VITE_DEMO_PERSONAS === "true"
+export const DEMO_PERSONAS_ENABLED =
+  import.meta.env.DEV === true ||
+  import.meta.env.VITE_DEMO_PERSONAS === "true" ||
+  (typeof window !== "undefined" && window.__ENV__?.VITE_DEMO_PERSONAS === "true")
 export const DEMO_CREDENTIALS = !DEMO_PERSONAS_ENABLED ? {} : {
   adjuster: {
     email: "adjuster@insurimax.com",

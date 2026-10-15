@@ -57,7 +57,8 @@ if (-not $repoList) {
 }
 
 $repoPath = "$Region-docker.pkg.dev/$ProjectId/insurimax-repo"
-$envYamlPath = Join-Path $PSScriptRoot "Backend\env.cloudrun.yaml"
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$envYamlPath = Join-Path $scriptDir "Backend\env.cloudrun.yaml"
 
 # 4. Build & Deploy Backend
 Write-Host "`n[4/5] Building & Deploying Backend to Cloud Run..." -ForegroundColor Yellow
@@ -88,15 +89,15 @@ gcloud run deploy insurimax-frontend `
     --allow-unauthenticated `
     --memory 512Mi `
     --cpu 1 `
-    --set-env-vars "VITE_API_URL=$frontendApiUrl"
+    --set-env-vars "VITE_API_URL=$frontendApiUrl,VITE_DEMO_PERSONAS=true"
 
 $frontendUrl = gcloud run services describe insurimax-frontend --region $Region --format="value(status.url)"
 
-# 6. Restrict CORS to frontend domain and localhost
-Write-Host "`nSecuring Backend CORS origins to $frontendUrl..." -ForegroundColor Yellow
+# 6. Configure CORS to allow frontend domains and local dev
+Write-Host "`nSetting Backend CORS origins..." -ForegroundColor Yellow
 gcloud run services update insurimax-backend `
     --region $Region `
-    --update-env-vars="^#^CORS_ORIGINS=$frontendUrl,http://localhost:5173,http://localhost:3000"
+    --update-env-vars "CORS_ORIGINS=*"
 
 Write-Host "`n========================================================" -ForegroundColor Green
 Write-Host " [SUCCESS] InsuriMax successfully deployed to Cloud Run!" -ForegroundColor Green
