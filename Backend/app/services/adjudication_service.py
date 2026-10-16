@@ -22,7 +22,7 @@ from app.models.adjudication import (
     LineItemStatus,
     OverrideReason,
 )
-from app.models.claim import Claim, ClaimStatus
+from app.models.claim import Claim, ClaimStatus, ClaimStatusHistory
 from app.models.policy import NonPayableItem, PolicyRule
 from app.schemas.adjudication import FinalizeRequest, LineItemOverrideRequest
 from app.gcp import storage as gcs
@@ -651,12 +651,30 @@ async def finalize_adjudication(
     claim_result = await db.execute(select(Claim).where(Claim.id == claim_id))
     claim = claim_result.scalar_one_or_none()
     if claim:
+        old_status = claim.status
         claim.status = ClaimStatus.FINALIZED
         claim.finalized_at = datetime.now(timezone.utc)
         if request.adjuster_notes:
             claim.adjuster_notes = request.adjuster_notes
         claim.approved_amount = adj.total_approved_inr
         claim.deducted_amount = adj.total_deducted_inr
+
+        # The audit trail is built from status history: record the sign-off like every other transition
+        note = (
+            f"Locked & finalized: {_inr(adj.total_approved_inr or 0)} approved of "
+            f"{_inr(adj.total_billed_inr or 0)} billed"
+        )
+        if request.adjuster_notes:
+            note += f". Adjuster note: {request.adjuster_notes}"
+        db.add(
+            ClaimStatusHistory(
+                claim_id=claim.id,
+                from_status=old_status,
+                to_status=ClaimStatus.FINALIZED,
+                changed_by_id=finalized_by_id,
+                note=note,
+            )
+        )
 
     await db.flush()
 
